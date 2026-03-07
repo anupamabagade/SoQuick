@@ -1,2 +1,5 @@
 libgl1
 ffmpeg
+libswscale-dev
+libavcodec-dev
+libavformat-dev
