@@ -1,116 +1,99 @@
 import streamlit as st
-import tempfile
 import os
-import processor  # Ensure processor.py is in the same folder
 import subprocess
+import time
+import processor  # Assuming your logic is in processor.py
 
-# 1. Running analysis
 # --- Page Config ---
-st.set_page_config(
-    page_title="Pitcher Analysis Portal",
-    page_icon="⚾",
-    layout="centered"
-)
+st.set_page_config(page_title="SoQuick | Pitching Analysis", layout="wide")
 
-# --- Custom Styling ---
-st.markdown("""
-    <style>
-    .main { background-color: #f5f7f9; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; }
-    </style>
-    """, unsafe_allow_html=True)
+st.title("⚾ SoQuick Biomechanical Portal")
+st.markdown("---")
 
-st.title("⚾ Softball Pitching Analysis")
-st.write("Upload a pitching clip to generate automated velocity and mechanical insights.")
-
-# --- Sidebar: User Profile ---
+# --- Sidebar Configuration ---
 with st.sidebar:
-    st.header("Pitcher Profile")
-    st.info("These metrics ensure accurate MPH and scaling calculations.")
-    pitcher_height = st.number_input("Pitcher Height (Inches)", min_value=40, max_value=90, value=72)
-    pitcher_side = st.radio("Throwing Hand", ["RIGHT", "LEFT"])
+    st.header("Analysis Settings")
+    view_type = st.radio("Select Video View", ["Lateral (Side)", "Back (X-Factor)"])
     
-    st.divider()
-    st.write("### Analysis Settings")
-    slow_mo = st.checkbox("Slow Motion Output (2x)", value=True)
+    if view_type == "Lateral (Side)":
+        pitcher_height = st.number_input("Pitcher Height (inches)", min_value=40, max_value=90, value=72)
+        pitcher_side = st.selectbox("Pitching Arm", ["Right", "Left"])
+    
+    st.info("Note: Processing takes ~20-40 seconds depending on video length.")
 
-# --- Main UI: Toggle View ---
-view_mode = st.selectbox(
-    "Select Camera View",
-    ["Lateral (Side) View", "Back View"],
-    help="Choose Lateral for velocity/legs or Back View for hip-shoulder separation."
-)
-
-# --- File Upload ---
-uploaded_file = st.file_uploader("Upload Pitching Video", type=["mp4", "mov", "avi"])
+# --- File Uploader ---
+uploaded_file = st.file_uploader("Upload a pitching clip (MP4, MOV)", type=['mp4', 'mov', 'avi'])
 
 if uploaded_file is not None:
-    # 1. Create temporary files for processing
-    t_in = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-    t_in.write(uploaded_file.read())
-    t_in.close() # Close to allow CV2 to open it
-    
-    output_filename = "analyzed_output.mp4"
+    # Save the uploaded file to a temporary location
+    input_path = "input_video.mp4"
+    with open(input_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
 
-    # 2. Start Analysis Button
-    if st.button("🚀 Run Analysis"):
-        with st.spinner(f"Processing {view_mode}... This may take a minute."):
-            try:
-                if view_mode == "Lateral (Side) View":
-                    # Call the Lateral Engine
-                    processor.process_lateral(
-                        input_path=t_in.name,
-                        output_path=output_filename,
-                        p_height_inches=pitcher_height,
-                        p_side=pitcher_side
-                    )
-                else:
-                    # Call the Back View Engine
-                    processor.process_back(
-                        input_path=t_in.name,
-                        output_path=output_filename
-                    )
+    # Define paths for the stages of processing
+    raw_output = "temp_output.mp4"
+    web_ready = "web_ready.mp4"
 
-                # 3. Display Success & Video
-                if os.path.exists(output_filename):
-                    st.success("Analysis Complete!")
-                    st.video(output_filename)
-                    
-                    # Download Button
-                    with open(output_filename, "rb") as file:
-                        st.download_button(
-                            label="📥 Download Analyzed Video",
-                            data=file,
-                            file_name=f"PitchAnalysis_{view_mode.split()[0]}.mp4",
-                            mime="video/mp4"
-                        )
-                else:
-                    st.error("Analysis failed to generate output video.")
+    # Cleanup old files from previous runs
+    for f in [raw_output, web_ready]:
+        if os.path.exists(f):
+            os.remove(f)
 
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
+    if st.button("🚀 Start Biomechanical Analysis"):
+        status = st.status("Initializing Analysis Engine...", expanded=True)
+        
+        try:
+            # 1. RUN THE ANALYSIS (The "Engine" Phase)
+            status.update(label="Running Pose Estimation & Physics Engine...", state="running")
             
-            finally:
-                # Cleanup temporary file
-                if os.path.exists(t_in.name):
-                    os.remove(t_in.name)
+            if view_type == "Lateral (Side)":
+                # Ensure these function names match your processor.py exactly
+                processor.process_lateral(input_path, raw_output, pitcher_height, pitcher_side)
+            else:
+                processor.process_back(input_path, raw_output)
+
+            # 2. SAFETY GATE: Verify the file was actually created
+            if not os.path.exists(raw_output):
+                status.update(label="Analysis Failed!", state="error")
+                st.error("The analysis engine crashed or failed to save the video. Please check your logs.")
+                st.stop()
+
+            # 3. CONVERT FOR WEB (The "FFmpeg" Phase)
+            status.update(label="Optimizing Video for Web Playback...", state="running")
+            
+            # We use subprocess to call the ffmpeg package installed via packages.txt
+            conversion = subprocess.run([
+                'ffmpeg', '-i', raw_output,
+                '-vcodec', 'libx264',
+                '-preset', 'ultrafast', # Keeps it fast on Streamlit's limited CPU
+                '-crf', '28',           # Balanced quality/file size
+                web_ready, '-y'
+            ], capture_output=True, text=True)
+
+            # Check if FFmpeg succeeded
+            if conversion.returncode != 0:
+                st.error("FFmpeg optimization failed.")
+                st.code(conversion.stderr)
+                st.stop()
+
+            # 4. FINAL DISPLAY
+            status.update(label="Analysis Complete!", state="complete", expanded=False)
+            
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.subheader("Analyzed Video")
+                st.video(web_ready)
+            
+            with col2:
+                st.subheader("Performance Metrics")
+                # If your processor creates a CSV, you can display it here
+                if os.path.exists("report.csv"):
+                    st.download_button("Download Scouting Report", "report.csv")
+                    st.dataframe("report.csv")
+
+        except Exception as e:
+            st.error(f"An unexpected error occurred: {e}")
+            status.update(label="Error Detected", state="error")
 
 else:
-    st.info("Please upload a video file to begin.")
-
-# --- Footer ---
-st.divider()
-st.caption("Powered by MediaPipe Pose Landmark Detection.")
-
-# 2. Convert to Web-Friendly H.264
-st.info("Optimizing video for web playback...")
-subprocess.run([
-    'ffmpeg', '-i', 'temp_output.mp4', 
-    '-vcodec', 'libx264', 
-    '-preset', 'ultrafast', 
-    '-crf', '28', 
-    'web_ready.mp4', '-y'
-])
-
-# 3. Display the converted video
-st.video('web_ready.mp4')
+    st.warning("Please upload a video file to begin.")
