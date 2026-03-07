@@ -51,7 +51,7 @@ if uploaded_file:
                 status.update(label="Calculating Velocity & Leg Drive...")
                 processor.process_lateral(input_path, raw_output, p_height, p_side)
             else:
-                status.update(label="Analyzing Rotational X-Factor...")
+                status.update(label="Analyzing pitch...")
                 processor.process_back(input_path, raw_output)
 
             # 3. SAFETY CHECK: Did the engine finish?

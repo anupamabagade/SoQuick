@@ -103,7 +103,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
 
         # 'mp4v' is supposedly the most reliable software-based encoder for Linux servers
         fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
-        out = cv2.VideoWriter(output_path, fourcc, fps / slow_mo_factor, (w, h))
+        out = cv2.VideoWriter(output_path, fourcc, int(fps / slow_mo_factor), (int(w), int(h)))
 
         trail_history, pitch_summaries, peak_marker = [], [], []
         prev_pos, smoothed_pos, prev_vel = None, None, 0
