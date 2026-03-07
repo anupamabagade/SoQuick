@@ -104,8 +104,6 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
         # 'mp4v' is supposedly the most reliable software-based encoder for Linux servers
         # fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
         
-
-        output_path = "output_video.avi" 
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
         out = cv2.VideoWriter(output_path, fourcc, int(fps / slow_mo_factor), (int(w), int(h)))
 

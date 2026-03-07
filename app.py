@@ -31,7 +31,7 @@ uploaded_file = st.file_uploader("Upload Pitching Video", type=['mp4', 'mov', 'a
 if uploaded_file:
     # 1. Save upload to disk
     input_path = "input_temp.mp4"
-    raw_output = "raw_analyzed.mp4"
+    raw_output = "raw_analyzed.avi"
     web_ready = "web_ready.mp4"
     
     with open(input_path, "wb") as f:
@@ -47,7 +47,7 @@ if uploaded_file:
         try:
             # 2. TRIGGER THE CORRECT LOGIC
             # This calls the specific functions in your processor.py
-            if view_type == "Lateral (Side)":
+            if view_type == "Lateral (Trace)":
                 status.update(label="Calculating Velocity & Leg Drive...")
                 processor.process_lateral(input_path, raw_output, p_height, p_side)
             else:
