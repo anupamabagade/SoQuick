@@ -17,13 +17,13 @@ with st.sidebar:
     st.markdown("---")
     
     # Contextual inputs based on the toggle
-    if view_type == "Lateral (Side)":
+    if view_type == "Lateral (Trace)":
         st.subheader("Lateral Parameters")
         p_height = st.number_input("Pitcher Height (inches)", value=73)
         p_side = st.selectbox("Pitching Arm", ["Right", "Left"])
     else:
         st.subheader("Back View Parameters")
-        st.info("Detecting Shoulder-Hip Separation (X-Factor)")
+        st.info("Detecting Shoulder-Hip Separation")
 
 # --- File Uploader ---
 uploaded_file = st.file_uploader("Upload Pitching Video", type=['mp4', 'mov', 'avi'])
