@@ -219,7 +219,10 @@ def process_back(input_path, output_path, slow_mo_factor=2):
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
         # slow_mo_factor adjusts output FPS for browser playback
-        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps / slow_mo_factor, (w, h))
+        #out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps / slow_mo_factor, (w, h))
+
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        out = cv2.VideoWriter(output_path, fourcc, int(fps / slow_mo_factor), (int(w), int(h)))
 
         max_separation = 0
         max_x_time = "00:00.00"
