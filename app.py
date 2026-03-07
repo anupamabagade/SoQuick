@@ -2,7 +2,9 @@ import streamlit as st
 import tempfile
 import os
 import processor  # Ensure processor.py is in the same folder
+import subprocess
 
+# 1. Running analysis
 # --- Page Config ---
 st.set_page_config(
     page_title="Pitcher Analysis Portal",
@@ -99,3 +101,16 @@ else:
 # --- Footer ---
 st.divider()
 st.caption("Powered by MediaPipe Pose Landmark Detection.")
+
+# 2. Convert to Web-Friendly H.264
+st.info("Optimizing video for web playback...")
+subprocess.run([
+    'ffmpeg', '-i', 'temp_output.mp4', 
+    '-vcodec', 'libx264', 
+    '-preset', 'ultrafast', 
+    '-crf', '28', 
+    'web_ready.mp4', '-y'
+])
+
+# 3. Display the converted video
+st.video('web_ready.mp4')
