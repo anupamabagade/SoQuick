@@ -97,8 +97,13 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
         cap = cv2.VideoCapture(input_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        # Update 11:36 pm 03.06.26
         # Use avc1 for web compatibility, and adjust output FPS for slow motion
-        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps / slow_mo_factor, (w, h))
+        # out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps / slow_mo_factor, (w, h))
+
+        # 'mp4v' is supposedly the most reliable software-based encoder for Linux servers
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
+        out = cv2.VideoWriter(output_path, fourcc, fps / slow_mo_factor, (w, h))
 
         trail_history, pitch_summaries, peak_marker = [], [], []
         prev_pos, smoothed_pos, prev_vel = None, None, 0
