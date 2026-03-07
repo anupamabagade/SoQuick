@@ -6,7 +6,7 @@ import processor  # Ensure your processor.py contains process_lateral and proces
 
 # --- UI Configuration ---
 st.set_page_config(page_title="SoQuick | Biomechanical Portal", layout="wide")
-st.title("⚾ SoQuick Pitching Analysis")
+st.title("🥎 SoQuick Pitching Analysis")
 
 # --- Sidebar: The Toggle & Inputs ---
 with st.sidebar:
