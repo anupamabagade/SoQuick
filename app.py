@@ -12,7 +12,7 @@ st.title("⚾ SoQuick Pitching Analysis")
 with st.sidebar:
     st.header("Analysis Controls")
     # This restores the toggle you were looking for
-    view_type = st.radio("Select Analysis View", ["Lateral (Side)", "Back (X-Factor)"])
+    view_type = st.radio("Select Analysis View", ["Lateral (Trace)", "Back (Separation)"])
     
     st.markdown("---")
     
