@@ -131,9 +131,9 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 l_ankle_ang = get_angle_3d(lm[L_KNEE], lm[L_ANKLE], lm[L_FOOT])
                 d_knee_ang = get_angle_3d(lm[D_HIP], lm[D_KNEE], lm[D_ANKLE])
                 d_ankle_ang = get_angle_3d(lm[D_KNEE], lm[D_ANKLE], lm[D_FOOT])
-                s_ang = abs(get_line_rotation(lm[15], lm[16]))
-                h_ang = abs(get_line_rotation(lm[L_HIP], lm[D_HIP]))
-                separation = abs(s_ang - h_ang)
+                # s_ang = abs(get_line_rotation(lm[15], lm[16]))
+                # h_ang = abs(get_line_rotation(lm[L_HIP], lm[D_HIP]))
+                # separation = abs(s_ang - h_ang)
 
                 # 2. Velocity Tracking
                 raw_pos = np.array([lm[WRIST].x * w, lm[WRIST].y * h])
@@ -178,7 +178,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 l_line(SHOULDER, ELBOW, (255, 255, 0)); l_line(ELBOW, WRIST, (255, 255, 0))
                 l_line(L_HIP, L_KNEE, (0, 255, 255)); l_line(L_KNEE, L_ANKLE, (0, 255, 255)); l_line(L_ANKLE, L_FOOT, (0, 165, 255))
                 l_line(D_HIP, D_KNEE, (0, 255, 0)); l_line(D_KNEE, D_ANKLE, (0, 255, 0)); l_line(D_ANKLE, D_FOOT, (255, 0, 255))
-                l_line(15, 16, (255, 0, 255)); l_line(L_HIP, D_HIP, (255, 255, 0))
+                #l_line(15, 16, (255, 0, 255)); l_line(L_HIP, D_HIP, (255, 255, 0))
 
                 
             # --- Overlays (HUD, Ticker, Trails) ---
@@ -197,7 +197,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
             cv2.putText(frame, "LEAD LEG", (300, 100), 1, 0.8, (0, 255, 255), 1)
             cv2.putText(frame, "DRIVE LEG", (300, 125), 1, 0.8, (0, 255, 0), 1)
 
-            draw_sleek_label(frame, f"SEPARATION: {separation:.1f} DEG", (50, h - 50), (0, 255, 0), 0.8)    
+            #draw_sleek_label(frame, f"SEPARATION: {separation:.1f} DEG", (50, h - 50), (0, 255, 0), 0.8)    
             
             # Timer Ticker
             t_sec = frame_count / fps
