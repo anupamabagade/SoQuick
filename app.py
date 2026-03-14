@@ -21,6 +21,7 @@ with st.sidebar:
         st.subheader("Lateral Parameters")
         p_height = st.number_input("Pitcher Height (inches)", value=73)
         p_side = st.selectbox("Pitching Arm", ["Right", "Left"])
+        slow_mo = st.slider("Slow Motion Factor", min_value=1, max_value=4, value=2)
     else:
         st.subheader("Back View Parameters")
         st.info("Detecting Shoulder-Hip Separation")
@@ -49,10 +50,10 @@ if uploaded_file:
             # This calls the specific functions in your processor.py
             if view_type == "Lateral (Trace)":
                 status.update(label="Calculating Velocity & Leg Drive...")
-                processor.process_lateral(input_path, raw_output, p_height, p_side)
+                processor.process_lateral(input_path, raw_output, p_height, p_side, slow_mo_factor=slow_mo)
             else:
                 status.update(label="Analyzing pitch...")
-                processor.process_back(input_path, raw_output)
+                processor.process_back(input_path, raw_output, slow_mo_factor=slow_mo)
 
             # 3. SAFETY CHECK: Did the engine finish?
             if not os.path.exists(raw_output):
