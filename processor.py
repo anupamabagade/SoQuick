@@ -178,9 +178,9 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 l_line(SHOULDER, ELBOW, (255, 255, 0)); l_line(ELBOW, WRIST, (255, 255, 0))
                 l_line(L_HIP, L_KNEE, (0, 255, 255)); l_line(L_KNEE, L_ANKLE, (0, 255, 255)); l_line(L_ANKLE, L_FOOT, (0, 165, 255))
                 l_line(D_HIP, D_KNEE, (0, 255, 0)); l_line(D_KNEE, D_ANKLE, (0, 255, 0)); l_line(D_ANKLE, D_FOOT, (255, 0, 255))
+                l_line(15, 16, (255, 0, 255)); l_line(L_HIP, D_HIP, (255, 255, 0))
 
-                cv2.line(frame, (int(lm[15].x*w), int(lm[15].y*h)), (int(lm[16].x*w), int(lm[16].y*h)), (255, 0, 255), 2)
-                cv2.line(frame, (int(lm[L_HIP].x*w), int(lm[L_HIP].y*h)), (int(lm[D_HIP].x*w), int(lm[D_HIP].y*h)), (255, 255, 0), 2)
+                
             # --- Overlays (HUD, Ticker, Trails) ---
             for i in range(1, len(trail_history)):
                 cv2.line(frame, trail_history[i-1][:2], trail_history[i][:2], get_heatmap_color(trail_history[i][2]), 10, cv2.LINE_AA)
