@@ -23,6 +23,7 @@ with st.sidebar:
         p_side = st.selectbox("Pitching Arm", ["Right", "Left"])
         slow_mo = st.slider("Slow Motion Factor", min_value=1, max_value=4, value=2)
     else:
+        slow_mo = st.slider("Slow Motion Factor", min_value=1, max_value=4, value=2)
         st.subheader("Back View Parameters")
         st.info("Detecting Shoulder-Hip Separation")
 
