@@ -3,3 +3,6 @@ ffmpeg
 libswscale-dev
 libavcodec-dev
 libavformat-dev
+libglib2.0-0
+libgles2
+libegl1
