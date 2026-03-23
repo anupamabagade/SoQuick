@@ -1,4 +1,5 @@
 ffmpeg
 libgl1
 libgles2
-libglib2.0-dev
+libegl1
+libdbus-1-3
