@@ -23,7 +23,10 @@ def get_angle_3d(p1, p2, p3):
     v2 = np.array([p3.x - p2.x, p3.y - p2.y, p3.z - p2.z])
     unit_v1 = v1 / np.linalg.norm(v1)
     unit_v2 = v2 / np.linalg.norm(v2)
-    return np.degrees(np.arccos(np.clip(np.dot(unit_v1, unit_v2), -1.0, 1.0)))
+    angle = np.degrees(np.arccos(np.clip(np.dot(unit_v1, unit_v2), -1.0, 1.0)))
+    if angle > 180:
+        angle = 360 - angle
+    return angle
 
 def get_line_rotation(p1, p2):
     return np.degrees(np.arctan2(p2.y - p1.y, p2.x - p1.x))
