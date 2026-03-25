@@ -156,11 +156,11 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 # node_knee = [lm[D_KNEE].x * w, lm[D_KNEE].y * h]
                 # Determine which hip is 'Forward' (closer to the catcher)
                 if lm[D_HIP].x > lm[L_HIP].x:
-                    target_hip = lm[D_HIP]
-                    target_knee = lm[D_KNEE]
+                    target_hip = D_HIP
+                    target_knee = D_KNEE
                 else:
-                    target_hip = lm[L_HIP]
-                    target_knee = lm[L_KNEE]
+                    target_hip = L_HIP
+                    target_knee = L_KNEE
 
                 # Pass these 'stabilized' points into get_angle_2d
                              
