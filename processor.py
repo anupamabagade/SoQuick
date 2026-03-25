@@ -209,7 +209,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 draw_protractor(frame, lm[D_KNEE], lm[D_HIP], lm[D_ANKLE], d_knee_ang, (0, 255, 0))
                 draw_protractor(frame, lm[D_ANKLE], lm[D_KNEE], lm[D_FOOT], d_ankle_ang, (255, 0, 255))
                 draw_protractor(frame, lm[ELBOW], lm[SHOULDER], lm[WRIST], elbow_ang, (255, 255, 0))
-                draw_protractor(frame, target_hip, lm[SHOULDER], target_knee, hip_ang, (0, 128, 255))
+                draw_protractor(frame, lm[target_hip], lm[SHOULDER], lm[target_knee], hip_ang, (0, 128, 255))
                 #draw_protractor(frame, lm[L_HIP], lm[SHOULDER], lm[L_KNEE], hip_ang_2, (0, 128, 255))
 
                 # Skeleton Lines
