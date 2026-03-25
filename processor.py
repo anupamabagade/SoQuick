@@ -28,6 +28,17 @@ def get_angle_3d(p1, p2, p3):
         angle = 360 - angle
     return angle
 
+def get_angle_2d(a, b, c):
+    # a, b, c are [x, y] coordinates
+    ba = np.array(a) - np.array(b)
+    bc = np.array(c) - np.array(b)
+
+    cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
+    angle = np.degrees(np.arccos(np.clip(cosine_angle, -1.0, 1.0)))
+    
+    # This ensures it stays as the "Interior" angle
+    return angle
+
 def get_line_rotation(p1, p2):
     return np.degrees(np.arctan2(p2.y - p1.y, p2.x - p1.x))
 
@@ -134,7 +145,20 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 l_ankle_ang = get_angle_3d(lm[L_KNEE], lm[L_ANKLE], lm[L_FOOT])
                 d_knee_ang = get_angle_3d(lm[D_HIP], lm[D_KNEE], lm[D_ANKLE])
                 d_ankle_ang = get_angle_3d(lm[D_KNEE], lm[D_ANKLE], lm[D_FOOT])
-                hip_ang = get_angle_3d(lm[SHOULDER], lm[D_HIP], lm[D_KNEE]) # Needs to be the angle between hip and the leg in front. Leg in front changes
+                
+                # Extract the coordinates for the Hip Angle (Torso to Quad)
+                # Vertex (B) = Hip
+                # Point A = Shoulder
+                # Point C = Knee
+
+                node_shoulder = [lm[SHOULDER].x * w, lm[SHOULDER].y * h]
+                node_hip = [lm[D_HIP].x * w, lm[D_HIP].y * h]
+                node_knee = [lm[D_KNEE].x * w, lm[D_KNEE].y * h]
+
+                hip_ang = get_angle_2d(node_shoulder, node_hip, node_knee)             
+                #hip_ang = get_angle_3d(lm[SHOULDER], lm[D_HIP], lm[D_KNEE]) # Needs to be the angle between hip and the leg in front. Leg in front changes
+                
+                
                 #hip_ang_2 = get_angle_3d(lm[SHOULDER], lm[L_HIP], lm[L_KNEE])
                 # s_ang = abs(get_line_rotation(lm[15], lm[16]))
                 # h_ang = abs(get_line_rotation(lm[L_HIP], lm[D_HIP]))
