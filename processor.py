@@ -135,7 +135,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 d_knee_ang = get_angle_3d(lm[D_HIP], lm[D_KNEE], lm[D_ANKLE])
                 d_ankle_ang = get_angle_3d(lm[D_KNEE], lm[D_ANKLE], lm[D_FOOT])
                 hip_ang = get_angle_3d(lm[SHOULDER], lm[D_HIP], lm[D_KNEE]) # Needs to be the angle between hip and the leg in front. Leg in front changes
-                hip_ang_2 = get_angle_3d(lm[SHOULDER], lm[L_HIP], lm[L_KNEE])
+                #hip_ang_2 = get_angle_3d(lm[SHOULDER], lm[L_HIP], lm[L_KNEE])
                 # s_ang = abs(get_line_rotation(lm[15], lm[16]))
                 # h_ang = abs(get_line_rotation(lm[L_HIP], lm[D_HIP]))
                 # separation = abs(s_ang - h_ang)
@@ -178,7 +178,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 draw_protractor(frame, lm[D_ANKLE], lm[D_KNEE], lm[D_FOOT], d_ankle_ang, (255, 0, 255))
                 draw_protractor(frame, lm[ELBOW], lm[SHOULDER], lm[WRIST], elbow_ang, (255, 255, 0))
                 draw_protractor(frame, lm[D_HIP], lm[SHOULDER], lm[D_KNEE], hip_ang, (0, 128, 255))
-                draw_protractor(frame, lm[L_HIP], lm[SHOULDER], lm[L_KNEE], hip_ang_2, (0, 128, 255))
+                #draw_protractor(frame, lm[L_HIP], lm[SHOULDER], lm[L_KNEE], hip_ang_2, (0, 128, 255))
 
                 # Skeleton Lines
                 def l_line(p1, p2, col): cv2.line(frame, (int(lm[p1].x*w), int(lm[p1].y*h)), (int(lm[p2].x*w), int(lm[p2].y*h)), col, 2)
@@ -186,7 +186,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 l_line(L_HIP, L_KNEE, (0, 255, 255)); l_line(L_KNEE, L_ANKLE, (0, 255, 255)); l_line(L_ANKLE, L_FOOT, (0, 165, 255))
                 l_line(D_HIP, D_KNEE, (0, 255, 0)); l_line(D_KNEE, D_ANKLE, (0, 255, 0)); l_line(D_ANKLE, D_FOOT, (255, 0, 255))
                 l_line(SHOULDER, D_HIP, (0, 128, 255)); l_line(D_HIP, D_KNEE, (0, 128, 255))
-                l_line(SHOULDER, L_HIP, (0, 128, 255)); l_line(L_HIP, L_KNEE, (0, 128, 255))
+                #l_line(SHOULDER, L_HIP, (0, 128, 255)); l_line(L_HIP, L_KNEE, (0, 128, 255))
                 
             # --- Overlays (HUD, Ticker, Trails) ---
             for i in range(1, len(trail_history)):
