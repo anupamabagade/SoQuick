@@ -164,7 +164,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
 
                 # Pass these 'stabilized' points into get_angle_2d
                              
-                hip_ang = get_angle_3d(lm[SHOULDER], target_hip, target_knee) # Needs to be the angle between hip and the leg in front. Leg in front changes
+                hip_ang = get_angle_3d(lm[SHOULDER], lm[target_hip], lm[target_knee]) # Needs to be the angle between hip and the leg in front. Leg in front changes
                 
                 # hip_ang = get_angle_2d(node_shoulder, node_hip, node_knee)
                 # hip_ang_2 = get_angle_3d(lm[SHOULDER], lm[L_HIP], lm[L_KNEE])
