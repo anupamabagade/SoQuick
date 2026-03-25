@@ -209,7 +209,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 draw_protractor(frame, lm[D_KNEE], lm[D_HIP], lm[D_ANKLE], d_knee_ang, (0, 255, 0))
                 draw_protractor(frame, lm[D_ANKLE], lm[D_KNEE], lm[D_FOOT], d_ankle_ang, (255, 0, 255))
                 draw_protractor(frame, lm[ELBOW], lm[SHOULDER], lm[WRIST], elbow_ang, (255, 255, 0))
-                draw_protractor(frame, lm[D_HIP], lm[SHOULDER], lm[D_KNEE], hip_ang, (0, 128, 255))
+                draw_protractor(frame, target_hip, lm[SHOULDER], target_knee, hip_ang, (0, 128, 255))
                 #draw_protractor(frame, lm[L_HIP], lm[SHOULDER], lm[L_KNEE], hip_ang_2, (0, 128, 255))
 
                 # Skeleton Lines
@@ -217,7 +217,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 l_line(SHOULDER, ELBOW, (255, 255, 0)); l_line(ELBOW, WRIST, (255, 255, 0))
                 l_line(L_HIP, L_KNEE, (0, 255, 255)); l_line(L_KNEE, L_ANKLE, (0, 255, 255)); l_line(L_ANKLE, L_FOOT, (0, 165, 255))
                 l_line(D_HIP, D_KNEE, (0, 255, 0)); l_line(D_KNEE, D_ANKLE, (0, 255, 0)); l_line(D_ANKLE, D_FOOT, (255, 0, 255))
-                l_line(SHOULDER, D_HIP, (0, 128, 255)); l_line(D_HIP, D_KNEE, (0, 128, 255))
+                l_line(SHOULDER, target_hip, (0, 128, 255)); l_line(target_hip, target_knee, (0, 128, 255))
                 #l_line(SHOULDER, L_HIP, (0, 128, 255)); l_line(L_HIP, L_KNEE, (0, 128, 255))
                 
             # --- Overlays (HUD, Ticker, Trails) ---
