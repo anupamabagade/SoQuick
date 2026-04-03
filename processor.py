@@ -165,7 +165,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
     D_FOOT = D_ANKLE
 
     # YOLOv8-pose model  ("n"=nano for speed; swap to "s"/"m" for accuracy)
-    model = YOLO("yolov8n-pose.pt")
+    model = YOLO("yolov8m-pose.pt")
 
     cap = cv2.VideoCapture(input_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -316,7 +316,7 @@ def process_back(input_path, output_path, slow_mo_factor=2):
     L_SH  = YOLO_KP["L_SHOULDER"]; R_SH  = YOLO_KP["R_SHOULDER"]
     L_HIP = YOLO_KP["L_HIP"];      R_HIP = YOLO_KP["R_HIP"]
 
-    model = YOLO("yolov8n-pose.pt")
+    model = YOLO("yolov8m-pose.pt")
 
     cap = cv2.VideoCapture(input_path)
     fps         = cap.get(cv2.CAP_PROP_FPS)
