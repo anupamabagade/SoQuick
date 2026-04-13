@@ -171,8 +171,8 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
     fps = cap.get(cv2.CAP_PROP_FPS)
     w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # margin_x = int(w * 0.05)
-    # y_step = h * 0.10
+    margin_x = int(w * 0.05)
+    y_step = h * 0.10
 
     fourcc = cv2.VideoWriter_fourcc(*"XVID")
     out = cv2.VideoWriter(output_path, fourcc, int(fps / slow_mo_factor), (w, h))
@@ -229,58 +229,41 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 if cur_v > v_start_thresh and not is_pitching:
                     is_pitching = True
                     current_pitch_buffer, current_x_coords, current_y_coords = [], [], []
+            # --- Place this inside the 'if lm is not None' block in processor.py ---
 
-                if is_pitching:
-                    accel_m = abs(cur_v - prev_vel) / dt
-                    current_pitch_buffer.append([pitch_count+1, timestamp_ms, cur_v, accel_m, accel_m/GRAVITY])
-                    current_x_coords.append(smoothed_pos[0])
-                    current_y_coords.append(smoothed_pos[1])
-                    trail_history.append((int(smoothed_pos[0]), int(smoothed_pos[1]), cur_v))
+            # 1. Calculate the Real-Time Torso Angle
+            # We measure the angle of the line from Shoulder to Hip relative to the horizontal
+            torso_angle = get_line_rotation(lm[target_hip], lm[SHOULDER])
 
-                    low_speed_timer = (low_speed_timer + 1) if cur_v < v_stop_thresh else 0
+            # 2. Calculate Deviation from "Straight" (Vertical)
+            # A perfectly vertical torso is 90 degrees. 
+            # Positive = Shoulders trailing hips (Stretch/Separation)
+            # Negative = Shoulders leading hips (Early rotation)
+            real_time_sep_deg = abs(torso_angle) - 90
 
-                    if low_speed_timer > stop_buffer:
-                        pitch_count += 1
-                        v_list = [r[2] for r in current_pitch_buffer]
-                        p_idx  = int(np.argmax(v_list))
-                        peak_marker.append((
-                            int(current_x_coords[p_idx]),
-                            int(current_y_coords[p_idx]),
-                            round(v_list[p_idx] * MS_TO_MPH, 1)
-                        ))
-                        is_pitching, low_speed_timer = False, 0
+            # 3. Visuals: Drawing the "Deviation Line"
+            h_px, w_px = frame.shape[:2]
+            s_pos = (int(lm[SHOULDER].x * w_px), int(lm[SHOULDER].y * h_px))
+            h_pos = (int(lm[target_hip].x * w_px), int(lm[target_hip].y * h_px))
 
-                prev_vel = cur_v
-            prev_pos = smoothed_pos.copy()
+            # Draw the actual line between shoulder and hip
+            cv2.line(frame, s_pos, h_pos, (0, 255, 0), 2, cv2.LINE_AA)
 
-            # # --- Calculate Hip-Shoulder Separation (Lateral) ---
-            # # Positive value = Shoulder is 'behind' the hip (Good separation/stretch)
-            # # Negative value = Shoulder has 'passed' the hip (Early rotation)
+            # Draw a "Reference" vertical line from the hip to show the deviation
+            ref_vertical_top = (h_pos[0], h_pos[1] - 100)
+            cv2.line(frame, h_pos, ref_vertical_top, (255, 255, 255), 1, cv2.LINE_DASH)
 
-            # # 1. Get horizontal pixel positions
-            # shoulder_x_px = lm[SHOULDER].x * w
-            # hip_x_px      = lm[target_hip].x * w
+            # 4. Continuous UI Display
+            # Color logic: Green for positive separation, Red for early rotation
+            sep_color = (0, 255, 0) if real_time_sep_deg > 0 else (0, 0, 255)
 
-            # # 2. Calculate separation in meters (using your ppm calibration)
-            # # We multiply by -1 if the pitcher is facing Left to keep 'behind' as positive
-            # direction_multiplier = 1 if p_side.upper() == "RIGHT" else -1
-            # sep_meters = ((hip_x_px - shoulder_x_px) / ppm) * direction_multiplier
-
-            # # 3. Convert to inches for standard coaching metrics
-            # sep_inches = sep_meters * 39.37
-
-            # # --- Visualize the Separation ---
-            # # Draw a vertical line from shoulder and hip to show the 'gap'
-            # top_y = int(min(lm[SHOULDER].y, lm[target_hip].y) * h) - 20
-            # btm_y = int(max(lm[SHOULDER].y, lm[target_hip].y) * h) + 20
-
-            # cv2.line(frame, (int(shoulder_x_px), top_y), (int(shoulder_x_px), btm_y), (255, 0, 255), 1, cv2.LINE_AA)
-            # cv2.line(frame, (int(hip_x_px), top_y), (int(hip_x_px), btm_y), (255, 255, 0), 1, cv2.LINE_AA)
-
-            # # Draw a horizontal arrow representing the stretch
-            # cv2.arrowedLine(frame, (int(shoulder_x_px), top_y + 40), (int(hip_x_px), top_y + 40), (0, 255, 0), 2)
-
-            # draw_sleek_label(frame, f"X-STRETCH: {sep_inches:.1f} IN", (margin_x, int(h * 0.8)), (0, 255, 0), 0.9)
+            draw_sleek_label(
+                frame, 
+                f"SEP DEVIATION: {real_time_sep_deg:.1f} DEG", 
+                (margin_x, int(y_step * 4.5)), 
+                sep_color, 
+                0.8
+            )
 
             # --- Draw protractors ---
             draw_protractor(frame, lm[L_KNEE],     lm[L_HIP],    lm[L_ANKLE],    l_knee_ang,  (0,255,255))
