@@ -251,7 +251,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
 
             # Draw a "Reference" vertical line from the hip to show the deviation
             ref_vertical_top = (h_pos[0], h_pos[1] - 100)
-            cv2.line(frame, h_pos, ref_vertical_top, (255, 255, 255), 1, cv2.LINE_DASH)
+            cv2.line(frame, h_pos, ref_vertical_top, (255, 255, 255), 1, cv2.LINE_4)
 
             # 4. Continuous UI Display
             # Color logic: Green for positive separation, Red for early rotation
