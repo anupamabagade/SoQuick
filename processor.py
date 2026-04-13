@@ -174,8 +174,8 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
     margin_x = int(w * 0.05)
     y_step = h * 0.10
 
-    fourcc = cv2.VideoWriter_fourcc(*"XVID")
-    out = cv2.VideoWriter(output_path, fourcc, int(fps / slow_mo_factor), (w, h))
+    # fourcc = cv2.VideoWriter_fourcc(*"XVID")
+    # out = cv2.VideoWriter(output_path, fourcc, int(fps / slow_mo_factor), (w, h))
 
     trail_history, pitch_summaries, peak_marker = [], [], []
     prev_pos, smoothed_pos, prev_vel = None, None, 0
@@ -253,34 +253,34 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 prev_vel = cur_v
             prev_pos = smoothed_pos.copy()
 
-            # --- Calculate Hip-Shoulder Separation (Lateral) ---
-            # Positive value = Shoulder is 'behind' the hip (Good separation/stretch)
-            # Negative value = Shoulder has 'passed' the hip (Early rotation)
+            # # --- Calculate Hip-Shoulder Separation (Lateral) ---
+            # # Positive value = Shoulder is 'behind' the hip (Good separation/stretch)
+            # # Negative value = Shoulder has 'passed' the hip (Early rotation)
 
-            # 1. Get horizontal pixel positions
-            shoulder_x_px = lm[SHOULDER].x * w
-            hip_x_px      = lm[target_hip].x * w
+            # # 1. Get horizontal pixel positions
+            # shoulder_x_px = lm[SHOULDER].x * w
+            # hip_x_px      = lm[target_hip].x * w
 
-            # 2. Calculate separation in meters (using your ppm calibration)
-            # We multiply by -1 if the pitcher is facing Left to keep 'behind' as positive
-            direction_multiplier = 1 if p_side.upper() == "RIGHT" else -1
-            sep_meters = ((hip_x_px - shoulder_x_px) / ppm) * direction_multiplier
+            # # 2. Calculate separation in meters (using your ppm calibration)
+            # # We multiply by -1 if the pitcher is facing Left to keep 'behind' as positive
+            # direction_multiplier = 1 if p_side.upper() == "RIGHT" else -1
+            # sep_meters = ((hip_x_px - shoulder_x_px) / ppm) * direction_multiplier
 
-            # 3. Convert to inches for standard coaching metrics
-            sep_inches = sep_meters * 39.37
+            # # 3. Convert to inches for standard coaching metrics
+            # sep_inches = sep_meters * 39.37
 
-            # --- Visualize the Separation ---
-            # Draw a vertical line from shoulder and hip to show the 'gap'
-            top_y = int(min(lm[SHOULDER].y, lm[target_hip].y) * h) - 20
-            btm_y = int(max(lm[SHOULDER].y, lm[target_hip].y) * h) + 20
+            # # --- Visualize the Separation ---
+            # # Draw a vertical line from shoulder and hip to show the 'gap'
+            # top_y = int(min(lm[SHOULDER].y, lm[target_hip].y) * h) - 20
+            # btm_y = int(max(lm[SHOULDER].y, lm[target_hip].y) * h) + 20
 
-            cv2.line(frame, (int(shoulder_x_px), top_y), (int(shoulder_x_px), btm_y), (255, 0, 255), 1, cv2.LINE_AA)
-            cv2.line(frame, (int(hip_x_px), top_y), (int(hip_x_px), btm_y), (255, 255, 0), 1, cv2.LINE_AA)
+            # cv2.line(frame, (int(shoulder_x_px), top_y), (int(shoulder_x_px), btm_y), (255, 0, 255), 1, cv2.LINE_AA)
+            # cv2.line(frame, (int(hip_x_px), top_y), (int(hip_x_px), btm_y), (255, 255, 0), 1, cv2.LINE_AA)
 
-            # Draw a horizontal arrow representing the stretch
-            cv2.arrowedLine(frame, (int(shoulder_x_px), top_y + 40), (int(hip_x_px), top_y + 40), (0, 255, 0), 2)
+            # # Draw a horizontal arrow representing the stretch
+            # cv2.arrowedLine(frame, (int(shoulder_x_px), top_y + 40), (int(hip_x_px), top_y + 40), (0, 255, 0), 2)
 
-            draw_sleek_label(frame, f"X-STRETCH: {sep_inches:.1f} IN", (margin_x, int(h * 0.8)), (0, 255, 0), 0.9)
+            # draw_sleek_label(frame, f"X-STRETCH: {sep_inches:.1f} IN", (margin_x, int(h * 0.8)), (0, 255, 0), 0.9)
 
             # --- Draw protractors ---
             draw_protractor(frame, lm[L_KNEE],     lm[L_HIP],    lm[L_ANKLE],    l_knee_ang,  (0,255,255))
