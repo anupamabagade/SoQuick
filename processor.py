@@ -153,12 +153,16 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
         SHOULDER = YOLO_KP["R_SHOULDER"]
         L_HIP    = YOLO_KP["L_HIP"];   L_KNEE = YOLO_KP["L_KNEE"];   L_ANKLE = YOLO_KP["L_ANKLE"]
         D_HIP    = YOLO_KP["R_HIP"];   D_KNEE = YOLO_KP["R_KNEE"];   D_ANKLE = YOLO_KP["R_ANKLE"]
+        PITCH_SH = YOLO_KP["R_SHOULDER"]
+        PITCH_HIP = YOLO_KP["R_HIP"]
     else:
         WRIST    = YOLO_KP["L_WRIST"]
         ELBOW    = YOLO_KP["L_ELBOW"]
         SHOULDER = YOLO_KP["L_SHOULDER"]
         D_HIP    = YOLO_KP["L_HIP"];   D_KNEE = YOLO_KP["L_KNEE"];   D_ANKLE = YOLO_KP["L_ANKLE"]
         L_HIP    = YOLO_KP["R_HIP"];   L_KNEE = YOLO_KP["R_KNEE"];   L_ANKLE = YOLO_KP["R_ANKLE"]
+        PITCH_SH = YOLO_KP["L_SHOULDER"]
+        PITCH_HIP = YOLO_KP["L_HIP"]
 
     # No foot-tip kp in COCO-17 – reuse ankle as distal point
     L_FOOT = L_ANKLE
@@ -171,6 +175,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
     fps = cap.get(cv2.CAP_PROP_FPS)
     w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     margin_x = int(w * 0.05)
     y_step = h * 0.10
 
@@ -186,6 +191,12 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
     PPM_RATIO = 0.92
 
     frame_count = 0
+
+        
+
+    max_lateral_sep = 0
+    final_frame = None
+
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
@@ -231,34 +242,29 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                     current_pitch_buffer, current_x_coords, current_y_coords = [], [], []
             
             
-            # 1. Calculate Real-Time Torso Angle & Deviation
-            torso_angle = get_line_rotation(lm[target_hip], lm[SHOULDER])
+            # 2. CALCULATION: Use the fixed 'PITCH' indices to prevent switching
+            torso_angle = get_line_rotation(lm[PITCH_HIP], lm[PITCH_SH])
             real_time_sep_deg = abs(torso_angle) - 90
+            
+            # Track the maximum value found during the pitch
+            if real_time_sep_deg > max_lateral_sep:
+                max_lateral_sep = real_time_sep_deg
 
-            # 2. Coordinates for Drawing
-            s_px = (int(lm[SHOULDER].x * w), int(lm[SHOULDER].y * h))
-            h_px_coord = (int(lm[target_hip].x * w), int(lm[target_hip].y * h))
+            # 3. VISUALS: Thicker, more visible lines
+            s_px = (int(lm[PITCH_SH].x * w), int(lm[PITCH_SH].y * h))
+            h_px_coord = (int(lm[PITCH_HIP].x * w), int(lm[PITCH_HIP].y * h))
 
-            # --- 3. MAKE LINE MORE VISIBLE & THICKER ---
-            # Draw a thick black outline first for high contrast against any background
-            cv2.line(frame, s_px, h_px_coord, (0, 0, 0), 6, cv2.LINE_AA)
-            # Draw the bright core line on top
-            cv2.line(frame, s_px, h_px_coord, (0, 255, 0), 3, cv2.LINE_AA)
+            cv2.line(frame, s_px, h_px_coord, (0, 0, 0), 6, cv2.LINE_AA) # Outer
+            cv2.line(frame, s_px, h_px_coord, (0, 255, 0), 3, cv2.LINE_AA) # Inner core
 
-            # Draw the reference vertical (thin for less clutter)
-            ref_top = (h_px_coord[0], h_px_coord[1] - 100)
-            cv2.line(frame, h_px_coord, ref_top, (255, 255, 255), 1, cv2.LINE_4)
+            # Vertical Reference
+            cv2.line(frame, h_px_coord, (h_px_coord[0], h_px_coord[1]-100), (255, 255, 255), 1, cv2.LINE_4)
 
-            # --- 4. MAKE DISPLAY SMALLER ---
-            # Reduced base_scale from 0.8 to 0.5 for a more compact UI
+            # Smaller UI Display
             sep_color = (0, 255, 0) if real_time_sep_deg > 0 else (0, 0, 255)
-            draw_sleek_label(
-                frame, 
-                f"SEP: {real_time_sep_deg:.1f} DEG", 
-                (margin_x, int(y_step * 4.5)), 
-                sep_color, 
-                base_scale=0.5  # This makes the text and box smaller
-            )
+            draw_sleek_label(frame, f"SEP: {real_time_sep_deg:.1f} DEG", 
+                             (margin_x, int(y_step * 4.5)), sep_color, base_scale=0.5)
+            
 
             # --- Draw protractors ---
             draw_protractor(frame, lm[L_KNEE],     lm[L_HIP],    lm[L_ANKLE],    l_knee_ang,  (0,255,255))
@@ -310,8 +316,18 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
         cv2.rectangle(frame, (w-tw-50, 20), (w-20, 70), (0,0,0), -1)
         cv2.putText(frame, timer_txt, (w-tw-40, 55), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255,255,255), 1, cv2.LINE_AA)
 
+        # 4. SUMMARY LOGIC: Capture final frame for summary
+        if frame_count == total_frames - 1:
+            summary_txt = f"MAX LATERAL SEP: {max_lateral_sep:.1f} DEG"
+            draw_sleek_label(frame, summary_txt, (-1, int(h - y_step)), (0, 255, 255), 0.8, 1.5)
+            final_frame = frame.copy()
+
         out.write(frame)
         frame_count += 1
+    # Freeze Frame Logic (to let the user read the max separation)
+    if final_frame is not None:
+        for _ in range(int((fps / slow_mo_factor) * FREEZE_DURATION_SEC)):
+            out.write(final_frame)
 
     cap.release()
     out.release()
