@@ -229,40 +229,35 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 if cur_v > v_start_thresh and not is_pitching:
                     is_pitching = True
                     current_pitch_buffer, current_x_coords, current_y_coords = [], [], []
-            # --- Place this inside the 'if lm is not None' block in processor.py ---
-
-            # 1. Calculate the Real-Time Torso Angle
-            # We measure the angle of the line from Shoulder to Hip relative to the horizontal
+            
+            
+            # 1. Calculate Real-Time Torso Angle & Deviation
             torso_angle = get_line_rotation(lm[target_hip], lm[SHOULDER])
-
-            # 2. Calculate Deviation from "Straight" (Vertical)
-            # A perfectly vertical torso is 90 degrees. 
-            # Positive = Shoulders trailing hips (Stretch/Separation)
-            # Negative = Shoulders leading hips (Early rotation)
             real_time_sep_deg = abs(torso_angle) - 90
 
-            # 3. Visuals: Drawing the "Deviation Line"
-            h_px, w_px = frame.shape[:2]
-            s_pos = (int(lm[SHOULDER].x * w_px), int(lm[SHOULDER].y * h_px))
-            h_pos = (int(lm[target_hip].x * w_px), int(lm[target_hip].y * h_px))
+            # 2. Coordinates for Drawing
+            s_px = (int(lm[SHOULDER].x * w), int(lm[SHOULDER].y * h))
+            h_px_coord = (int(lm[target_hip].x * w), int(lm[target_hip].y * h))
 
-            # Draw the actual line between shoulder and hip
-            cv2.line(frame, s_pos, h_pos, (0, 255, 0), 2, cv2.LINE_AA)
+            # --- 3. MAKE LINE MORE VISIBLE & THICKER ---
+            # Draw a thick black outline first for high contrast against any background
+            cv2.line(frame, s_px, h_px_coord, (0, 0, 0), 6, cv2.LINE_AA)
+            # Draw the bright core line on top
+            cv2.line(frame, s_px, h_px_coord, (0, 255, 0), 3, cv2.LINE_AA)
 
-            # Draw a "Reference" vertical line from the hip to show the deviation
-            ref_vertical_top = (h_pos[0], h_pos[1] - 100)
-            cv2.line(frame, h_pos, ref_vertical_top, (255, 255, 255), 1, cv2.LINE_4)
+            # Draw the reference vertical (thin for less clutter)
+            ref_top = (h_px_coord[0], h_px_coord[1] - 100)
+            cv2.line(frame, h_px_coord, ref_top, (255, 255, 255), 1, cv2.LINE_4)
 
-            # 4. Continuous UI Display
-            # Color logic: Green for positive separation, Red for early rotation
+            # --- 4. MAKE DISPLAY SMALLER ---
+            # Reduced base_scale from 0.8 to 0.5 for a more compact UI
             sep_color = (0, 255, 0) if real_time_sep_deg > 0 else (0, 0, 255)
-
             draw_sleek_label(
                 frame, 
-                f"SEP DEVIATION: {real_time_sep_deg:.1f} DEG", 
+                f"SEP: {real_time_sep_deg:.1f} DEG", 
                 (margin_x, int(y_step * 4.5)), 
                 sep_color, 
-                0.8
+                base_scale=0.5  # This makes the text and box smaller
             )
 
             # --- Draw protractors ---
