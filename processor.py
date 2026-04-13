@@ -171,11 +171,11 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
     fps = cap.get(cv2.CAP_PROP_FPS)
     w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    margin_x = int(w * 0.05)
-    y_step = h * 0.10
+    # margin_x = int(w * 0.05)
+    # y_step = h * 0.10
 
-    # fourcc = cv2.VideoWriter_fourcc(*"XVID")
-    # out = cv2.VideoWriter(output_path, fourcc, int(fps / slow_mo_factor), (w, h))
+    fourcc = cv2.VideoWriter_fourcc(*"XVID")
+    out = cv2.VideoWriter(output_path, fourcc, int(fps / slow_mo_factor), (w, h))
 
     trail_history, pitch_summaries, peak_marker = [], [], []
     prev_pos, smoothed_pos, prev_vel = None, None, 0
