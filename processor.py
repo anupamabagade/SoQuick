@@ -108,8 +108,8 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
         cap = cv2.VideoCapture(input_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps / slow_mo_factor, (w, h))
-
+        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps / slow_mo_factor, (w, h))
+        
         trail_history, peak_marker = [], []
         prev_pos, smoothed_pos, prev_vel = None, None, 0
         low_speed_timer, is_pitching, pitch_count = 0, False, 0
@@ -251,7 +251,7 @@ def process_back(input_path, output_path, slow_mo_factor=2):
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
         # slow_mo_factor adjusts output FPS for browser playback
-        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps / slow_mo_factor, (w, h))
+        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps / slow_mo_factor, (w, h))
 
         max_separation = 0
         max_x_time = "00:00.00"
