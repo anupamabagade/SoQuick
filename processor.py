@@ -53,6 +53,35 @@ def draw_sleek_label(img, text, pos, color=(255, 255, 255), base_scale=0.8, thic
     cv2.putText(img, text, (x, y), font, ui_scale, (255, 255, 255), thickness, cv2.LINE_AA)
     return (txt_w, txt_h)
 
+def draw_protractor(img, p_center, p_start, p_end, angle_val, color):
+    """Draws an semi-transparent arc and angle text between three points."""
+    h, w = img.shape[:2]
+    center = (int(p_center.x * w), int(p_center.y * h))
+    
+    # Calculate vectors and angles for the arc
+    v1 = np.array([p_start.x - p_center.x, p_start.y - p_center.y])
+    v2 = np.array([p_end.x - p_center.x, p_end.y - p_center.y])
+    
+    start_angle = np.degrees(np.arctan2(v1[1], v1[0]))
+    end_angle = np.degrees(np.arctan2(v2[1], v2[0]))
+    
+    diff = end_angle - start_angle
+    if diff > 180: diff -= 360
+    elif diff < -180: diff += 360
+    
+    f_start, f_end = start_angle, start_angle + diff
+    
+    # Draw the transparent overlay
+    overlay = img.copy()
+    cv2.ellipse(overlay, center, (40, 40), 0, f_start, f_end, color, -1)
+    cv2.addWeighted(overlay, 0.4, img, 0.6, 0, img)
+    
+    # Draw the outline and text
+    cv2.ellipse(img, center, (40, 40), 0, f_start, f_end, color, 2, cv2.LINE_AA)
+    disp = angle_val if angle_val <= 180 else 360 - angle_val
+    cv2.putText(img, f"{int(disp)}", (center[0]+15, center[1]-15), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+    
 def process_lateral(input_path, output_path, p_height_inches, p_side, display_mode="All", slow_mo_factor=2):
     p_height_m = p_height_inches * 0.0254
     
