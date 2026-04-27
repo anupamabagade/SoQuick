@@ -10,9 +10,19 @@ st.title("⚾ Softball Pitching Analysis")
 
 with st.sidebar:
     st.header("Pitcher Profile")
+    st.info("These metrics ensure accurate MPH and scaling calculations.")
+    
+    # 1. Height Input
     pitcher_height = st.number_input("Pitcher Height (Inches)", min_value=40, max_value=90, value=72)
+    
+    # 2. Side Input
     pitcher_side = st.radio("Throwing Hand", ["RIGHT", "LEFT"])
-    slow_mo = st.checkbox("Slow Motion Output (2x)", value=True)
+    
+    st.divider()
+    st.write("### Analysis Settings")
+    
+    # 3. New Slow Motion Slider (replacing the checkbox)
+    slow_mo_val = st.slider("Slow Motion Factor", min_value=1, max_value=4, value=2)
 
 # UI to fix "Double Printing" clutter
 view_mode = st.selectbox("Select Camera View", ["Lateral (Side) View", "Back View"])
@@ -38,12 +48,18 @@ if uploaded_file is not None:
             try:
                 if view_mode == "Lateral (Side) View":
                     processor.process_lateral(
-                        t_in.name, raw_output, pitcher_height, pitcher_side, 
-                        display_mode=display_mode, 
-                        slow_mo_factor=2 if slow_mo else 1
+                        t_in.name, 
+                        raw_output, 
+                        pitcher_height, 
+                        pitcher_side, 
+                        slow_mo_factor=slow_mo_val  # Use the slider value
                     )
                 else:
-                    processor.process_back(t_in.name, raw_output)
+                    processor.process_back(
+                        t_in.name, 
+                        raw_output,
+                        slow_mo_factor=slow_mo_val  # Use the slider value
+                    )
 
                 # --- FIX FOR BLACK SCREEN ---
                 # Convert to H.264 using ffmpeg so it plays in the browser
