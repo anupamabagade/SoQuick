@@ -184,8 +184,30 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                         cv2.putText(frame, f"{mph} mph", (px + 20, py), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
             # --- HUD ---
-            draw_sleek_label(frame, f"PITCHES: {pitch_count}", (20, 100), (0, 255, 255))
-            draw_sleek_label(frame, f"LIVE: {prev_vel * MS_TO_MPH:.1f} MPH", (20, 180), (255, 255, 255))
+
+            # --- ORIGINAL DASHBOARD (Top Left) ---
+            # Define colors to match your protractors
+            color_lead = (0, 255, 255)  # Yellow
+            color_drive = (0, 255, 0)   # Green
+            color_text = (255, 255, 255) # White
+
+            # Background Box for the Dashboard
+            cv2.rectangle(frame, (10, 20), (350, 280), (0, 0, 0), -1) # Solid black box
+            cv2.rectangle(frame, (10, 20), (350, 280), (100, 100, 100), 2) # Grey border
+
+            # Title
+            cv2.putText(frame, "MECHANICS HUB", (30, 60), cv2.FONT_HERSHEY_DUPLEX, 0.8, color_text, 2)
+            cv2.line(frame, (30, 75), (320, 75), (150, 150, 150), 1)
+
+            # Leg Metrics (Color Matched)
+            if 'l_knee_ang' in locals():
+                cv2.putText(frame, f"LEAD LEG: {int(l_knee_ang)} deg", (30, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_lead, 2)
+            if 'd_knee_ang' in locals():
+                cv2.putText(frame, f"DRIVE LEG: {int(d_knee_ang)} deg", (30, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_drive, 2)
+            
+            # Pitch Data
+            cv2.putText(frame, f"PITCH COUNT: {pitch_count}", (30, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_text, 2)
+            cv2.putText(frame, f"LIVE SPEED: {prev_vel * MS_TO_MPH:.1f} MPH", (30, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
             out.write(frame)
             frame_count += 1
