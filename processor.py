@@ -163,7 +163,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
 
                     # --- DRAW RIGHT LEG (Green/Magenta) ---
                     draw_protractor(frame, lm[R_KNEE], lm[R_HIP], lm[R_ANKLE], right_knee, (0, 255, 0))
-                    draw_protractor(frame, lm[R_ANKLE], lm[R_KNEE], lm[R_FOOT], right_ankle, (255, 0, 255))
+                    draw_protractor(frame, lm[R_ANKLE], lm[R_KNEE], lm[R_FOOT], right_ankle, ((180, 105, 255)))
                     cv2.line(frame, (int(lm[R_HIP].x*w), int(lm[R_HIP].y*h)), (int(lm[R_KNEE].x*w), int(lm[R_KNEE].y*h)), (0, 255, 0), 2)
                     cv2.line(frame, (int(lm[R_KNEE].x*w), int(lm[R_KNEE].y*h)), (int(lm[R_ANKLE].x*w), int(lm[R_ANKLE].y*h)), (0, 255, 0), 2)
 
