@@ -234,7 +234,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
             cv2.rectangle(frame, (10, 20), (380, 450), (100, 100, 100), 2) 
 
             # Header
-            cv2.putText(frame, "MECHANICS HUB", (30, 65), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
+            cv2.putText(frame, "DASHBOARD", (30, 65), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
             cv2.line(frame, (30, 80), (350, 80), (150, 150, 150), 1)
 
             # --- Row 1: Camera Facing Hip ---
@@ -257,10 +257,11 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 105, 255), 2) # PURPLE/VIOLET
 
             # --- Row 4: Pitch Data ---
-            cv2.putText(frame, f"SPEED: {prev_vel * 2.23694:.1f} MPH", (30, 370), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            cv2.putText(frame, f"COUNT: {pitch_count}", (30, 415), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            if display_mode in ["All", "Wrist Trace & Velocity Only"]:
+                cv2.putText(frame, f"SPEED: {prev_vel * 2.23694:.1f} MPH", (30, 370), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                cv2.putText(frame, f"COUNT: {pitch_count}", (30, 415), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
             out.write(frame)
             frame_count += 1
