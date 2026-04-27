@@ -179,7 +179,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                 if display_mode in ["All", "Wrist Trace & Velocity Only"]:
                     raw_pos = np.array([lm[WRIST].x * w, lm[WRIST].y * h])
                     if smoothed_pos is None: smoothed_pos = raw_pos
-                    smoothed_pos = (0.2 * raw_pos) + (0.8 * smoothed_pos)
+                    smoothed_pos = (0.4 * raw_pos) + (0.6 * smoothed_pos) # original 0.2 raw and 0.8 smoothed
 
                     if prev_pos is not None:
                         dt = 1 / fps
