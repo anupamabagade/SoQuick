@@ -123,26 +123,27 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                 lm = result.pose_landmarks[0]
                 ppm = abs(lm[30].y * h - lm[0].y * h) / p_height_m
 
-                # --- 1. LEG ANGLES (Lead & Drive) ---
+                # --- 1. LEG & HIP ANGLES ---
                 if display_mode in ["All", "Leg Angles Only"]:
-                    # Lead Leg
+                    # Lead Side (Yellow/Orange)
+                    l_hip_ang = get_angle_3d(lm[SHOULDER], lm[L_HIP], lm[L_KNEE])
                     l_knee_ang = get_angle_3d(lm[L_HIP], lm[L_KNEE], lm[L_ANKLE])
                     l_ankle_ang = get_angle_3d(lm[L_KNEE], lm[L_ANKLE], lm[L_FOOT])
-                    draw_protractor(frame, lm[L_KNEE], lm[L_HIP], lm[L_ANKLE], l_knee_ang, (0, 255, 255))
-                    draw_protractor(frame, lm[L_ANKLE], lm[L_KNEE], lm[L_FOOT], l_ankle_ang, (0, 165, 255))
                     
-                    # Drive Leg
+                    # Drive Side (Green/Purple)
+                    d_hip_ang = get_angle_3d(lm[SHOULDER], lm[D_HIP], lm[D_KNEE])
                     d_knee_ang = get_angle_3d(lm[D_HIP], lm[D_KNEE], lm[D_ANKLE])
-                    d_ankle_ang = get_angle_3d(lm[D_KNEE], lm[D_ANKLE], lm[D_FOOT])
-                    draw_protractor(frame, lm[D_KNEE], lm[D_HIP], lm[D_ANKLE], d_knee_ang, (0, 255, 0))
-                    draw_protractor(frame, lm[D_ANKLE], lm[D_KNEE], lm[D_FOOT], d_ankle_ang, (255, 0, 255))
-
-                    # Skeletal Lines for Legs
-                    cv2.line(frame, (int(lm[L_HIP].x*w), int(lm[L_HIP].y*h)), (int(lm[L_KNEE].x*w), int(lm[L_KNEE].y*h)), (0, 255, 255), 2)
-                    cv2.line(frame, (int(lm[L_KNEE].x*w), int(lm[L_KNEE].y*h)), (int(lm[L_ANKLE].x*w), int(lm[L_ANKLE].y*h)), (0, 255, 255), 2)
+                    
+                    # DRAW PROTRACTORS
+                    # Hip Angle (Lead)
+                    draw_protractor(frame, lm[L_HIP], lm[SHOULDER], lm[L_KNEE], l_hip_ang, (0, 165, 255)) 
+                    # Knee Angle (Lead)
+                    draw_protractor(frame, lm[L_KNEE], lm[L_HIP], lm[L_ANKLE], l_knee_ang, (0, 255, 255))
+                    
+                    # DRIVE LEG LINES (Green)
                     cv2.line(frame, (int(lm[D_HIP].x*w), int(lm[D_HIP].y*h)), (int(lm[D_KNEE].x*w), int(lm[D_KNEE].y*h)), (0, 255, 0), 2)
                     cv2.line(frame, (int(lm[D_KNEE].x*w), int(lm[D_KNEE].y*h)), (int(lm[D_ANKLE].x*w), int(lm[D_ANKLE].y*h)), (0, 255, 0), 2)
-
+                
                 # --- 2. ARM ANGLES (Throwing Elbow) ---
                 if display_mode in ["All", "Arm Angles Only"]:
                     elbow_ang = get_angle_3d(lm[SHOULDER], lm[ELBOW], lm[WRIST])
