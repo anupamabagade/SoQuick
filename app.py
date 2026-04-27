@@ -1,7 +1,6 @@
 import streamlit as st
 import tempfile
 import os
-import subprocess
 import processor 
 
 st.set_page_config(page_title="Pitcher Analysis Portal", page_icon="⚾", layout="centered")
@@ -10,22 +9,17 @@ st.title("⚾ Softball Pitching Analysis")
 
 with st.sidebar:
     st.header("Pitcher Profile")
-    st.info("These metrics ensure accurate MPH and scaling calculations.")
-    
-    # 1. Height Input
     pitcher_height = st.number_input("Pitcher Height (Inches)", min_value=40, max_value=90, value=72)
-    
-    # 2. Side Input
     pitcher_side = st.radio("Throwing Hand", ["RIGHT", "LEFT"])
     
     st.divider()
     st.write("### Analysis Settings")
-    
-    # 3. New Slow Motion Slider (replacing the checkbox)
+    # Updated to your requested 1-4x slider
     slow_mo_val = st.slider("Slow Motion Factor", min_value=1, max_value=4, value=2)
 
-# UI to fix "Double Printing" clutter
 view_mode = st.selectbox("Select Camera View", ["Lateral (Side) View", "Back View"])
+
+# --- NEW: Display Selection Dropdown ---
 display_mode = "All"
 if view_mode == "Lateral (Side) View":
     display_mode = st.selectbox(
@@ -38,40 +32,45 @@ uploaded_file = st.file_uploader("Upload Pitching Video", type=["mp4", "mov", "a
 if uploaded_file is not None:
     t_in = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
     t_in.write(uploaded_file.read())
-    t_in.close()
-    
-    raw_output = "raw_processed.mp4"
-    final_output = "web_ready.mp4"
+    t_in.close() 
+    output_filename = "analyzed_output.mp4"
 
     if st.button("🚀 Run Analysis"):
-        with st.spinner("Processing..."):
+        with st.spinner(f"Processing..."):
             try:
                 if view_mode == "Lateral (Side) View":
                     processor.process_lateral(
-                        t_in.name, 
-                        raw_output, 
-                        pitcher_height, 
-                        pitcher_side, 
-                        slow_mo_factor=slow_mo_val  # Use the slider value
+                        t_in.name, output_filename, 
+                        pitcher_height, pitcher_side, 
+                        display_mode=display_mode, # Passing the selection
+                        slow_mo_factor=slow_mo_val
                     )
                 else:
                     processor.process_back(
-                        t_in.name, 
-                        raw_output,
-                        slow_mo_factor=slow_mo_val  # Use the slider value
+                        t_in.name, output_filename, 
+                        slow_mo_factor=slow_mo_val
                     )
 
-                # --- FIX FOR BLACK SCREEN ---
-                # Convert to H.264 using ffmpeg so it plays in the browser
-                subprocess.run([
-                    'ffmpeg', '-y', '-i', raw_output, 
-                    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'ultrafast', final_output
-                ], check=True)
+                # ... inside the "Run Analysis" button logic ...
 
+                # 3. Display Success & Video
                 if os.path.exists(final_output):
                     st.success("Analysis Complete!")
-                    st.video(final_output)
+                    st.video(final_output) # Always play the final, web-compatible version
+                    
+                    # Download Button should also use the final_output
+                    with open(final_output, "rb") as file:
+                        st.download_button(
+                            label="📥 Download Analyzed Video",
+                            data=file,
+                            file_name=f"PitchAnalysis_{view_mode.split()[0]}.mp4",
+                            mime="video/mp4"
+                        )
+                else:
+                    st.error("Analysis failed to generate the web-ready output video.")
             except Exception as e:
                 st.error(f"Error: {e}")
             finally:
-                if os.path.exists(t_in.name): os.remove(t_in.name)
+                for f in [t_in.name, output_filename]: # Cleanup raw and temp files
+                    if os.path.exists(f): 
+                        os.remove(f)

@@ -55,17 +55,16 @@ def draw_sleek_label(img, text, pos, color=(255, 255, 255), base_scale=0.8, thic
 
 def process_lateral(input_path, output_path, p_height_inches, p_side, display_mode="All", slow_mo_factor=2):
     p_height_m = p_height_inches * 0.0254
-    yolo_model = YOLO("yolov8n-pose.pt") # YOLO is best for fast movement
     
-    # Landmark indices
+    # Landmark Mapping
     if p_side.upper() == 'RIGHT':
         WRIST, ELBOW, SHOULDER = 16, 14, 12
-        L_HIP, L_KNEE, L_ANKLE = 23, 25, 27
-        Y_WRIST = 10 # YOLO Right Wrist
+        L_HIP, L_KNEE, L_ANKLE, L_FOOT = 23, 25, 27, 31
+        D_HIP, D_KNEE, D_ANKLE, D_FOOT = 24, 26, 28, 32
     else:
         WRIST, ELBOW, SHOULDER = 15, 13, 11
-        L_HIP, L_KNEE, L_ANKLE = 24, 26, 28
-        Y_WRIST = 9 # YOLO Left Wrist
+        D_HIP, D_KNEE, D_ANKLE, D_FOOT = 23, 25, 27, 31
+        L_HIP, L_KNEE, L_ANKLE, L_FOOT = 24, 26, 28, 32
 
     base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task')
     options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
@@ -74,68 +73,52 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
         cap = cv2.VideoCapture(input_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        
-        # FIX FOR CRASH: Change codec to 'mp4v'
         out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps / slow_mo_factor, (w, h))
 
-        trail_history = []
-        smoothed_pos, prev_pos = None, None
-        is_pitching = False
-
+        trail_history, peak_marker = [], []
+        prev_pos, smoothed_pos = None, None
+        
         frame_count = 0
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret: break
             
-            # 1. YOLO for Wrist (Smoothness)
-            yolo_results = yolo_model(frame, verbose=False)[0]
-            wrist_coords = None
-            if yolo_results.keypoints:
-                kps = yolo_results.keypoints.xy[0].cpu().numpy()
-                if kps[Y_WRIST][0] > 0:
-                    wrist_coords = kps[Y_WRIST]
-
-            # 2. MediaPipe for Angles
             timestamp_ms = int((frame_count / fps) * 1000)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
-            result = landmarker.detect_for_video(mp_image, timestamp_ms)
+            result = landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=frame), timestamp_ms)
 
             if result.pose_landmarks:
                 lm = result.pose_landmarks[0]
                 ppm = abs(lm[30].y * h - lm[0].y * h) / p_height_m
 
-                if wrist_coords is not None:
-                    if smoothed_pos is None: smoothed_pos = wrist_coords
-                    smoothed_pos = (SMOOTHING_FACTOR * wrist_coords) + (1 - SMOOTHING_FACTOR) * smoothed_pos
-                    
-                    # Logic to clear trail if arm resets (Fixes "double printing")
-                    cur_v = 0
-                    if prev_pos is not None:
-                        cur_v = (np.linalg.norm(smoothed_pos - prev_pos) / ppm) * fps
-                    
-                    if cur_v > 6.0 and not is_pitching:
-                        is_pitching = True
-                        trail_history = [] # CLEAR OLD TRACE
-                    elif cur_v < 2.0:
-                        is_pitching = False
-                    
-                    if is_pitching:
-                        trail_history.append((int(smoothed_pos[0]), int(smoothed_pos[1]), cur_v))
-                    prev_pos = smoothed_pos.copy()
-
-                # --- CONDITIONAL DRAWING (Prevents Clutter) ---
+                # --- CONDITIONAL DRAWING BASED ON SELECTION ---
+                
+                # 1. Arm Angles
                 if display_mode in ["All", "Arm Angles Only"]:
                     elbow_ang = get_angle_3d(lm[SHOULDER], lm[ELBOW], lm[WRIST])
-                    #cv2.putText(frame, f"Elbow: {int(elbow_ang)}", (50, 100), 1, 2, (255, 255, 0), 2)
-                
-                if display_mode in ["All", "Leg Angles Only"]:
-                    knee_ang = get_angle_3d(lm[L_HIP], lm[L_KNEE], lm[L_ANKLE])
-                    #cv2.putText(frame, f"Knee: {int(knee_ang)}", (50, 150), 1, 2, (0, 255, 255), 2)
+                    draw_protractor(frame, lm[ELBOW], lm[SHOULDER], lm[WRIST], elbow_ang, (255, 255, 0))
+                    cv2.line(frame, (int(lm[SHOULDER].x*w), int(lm[SHOULDER].y*h)), (int(lm[ELBOW].x*w), int(lm[ELBOW].y*h)), (255, 255, 0), 2)
+                    cv2.line(frame, (int(lm[ELBOW].x*w), int(lm[ELBOW].y*h)), (int(lm[WRIST].x*w), int(lm[WRIST].y*h)), (255, 255, 0), 2)
 
-            # Draw Trace
-            if display_mode in ["All", "Wrist Trace & Velocity Only"]:
-                for i in range(1, len(trail_history)):
-                    cv2.line(frame, trail_history[i-1][:2], trail_history[i][:2], get_heatmap_color(trail_history[i][2]), 8)
+                # 2. Leg Angles
+                if display_mode in ["All", "Leg Angles Only"]:
+                    l_knee_ang = get_angle_3d(lm[L_HIP], lm[L_KNEE], lm[L_ANKLE])
+                    draw_protractor(frame, lm[L_KNEE], lm[L_HIP], lm[L_ANKLE], l_knee_ang, (0, 255, 255))
+                    # ... add other leg lines/protractors here ...
+
+                # 3. Wrist Trace & Velocity
+                if display_mode in ["All", "Wrist Trace & Velocity Only"]:
+                    raw_pos = np.array([lm[WRIST].x * w, lm[WRIST].y * h])
+                    if smoothed_pos is None: smoothed_pos = raw_pos
+                    smoothed_pos = (SMOOTHING_FACTOR * raw_pos) + ((1 - SMOOTHING_FACTOR) * smoothed_pos)
+                    
+                    if prev_pos is not None:
+                        cur_v = (np.linalg.norm(smoothed_pos - prev_pos) / ppm) * fps
+                        trail_history.append((int(smoothed_pos[0]), int(smoothed_pos[1]), cur_v))
+                        
+                    for i in range(1, len(trail_history)):
+                        cv2.line(frame, trail_history[i-1][:2], trail_history[i][:2], get_heatmap_color(trail_history[i][2]), 10)
+                    
+                    prev_pos = smoothed_pos.copy()
 
             out.write(frame)
             frame_count += 1
