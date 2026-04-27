@@ -87,15 +87,15 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
     v_start_thresh, v_stop_thresh = 3.5, 5.0
     stop_buffer = 25
     
-    # Landmark Mapping
-    if p_side.upper() == 'RIGHT':
-        WRIST, ELBOW, SHOULDER = 16, 14, 12
-        L_HIP, L_KNEE, L_ANKLE, L_FOOT = 23, 25, 27, 31
-        D_HIP, D_KNEE, D_ANKLE, D_FOOT = 24, 26, 28, 32
-    else:
-        WRIST, ELBOW, SHOULDER = 15, 13, 11
-        D_HIP, D_KNEE, D_ANKLE, D_FOOT = 23, 25, 27, 31
-        L_HIP, L_KNEE, L_ANKLE, L_FOOT = 24, 26, 28, 32
+    # 1. FIXED LANDMARK MAPPING (Absolute Left vs Right)
+    # MediaPipe indices are constant: Left=11,13,15,23,25,27,31 | Right=12,14,16,24,26,28,32
+    L_SH, L_HIP, L_KNEE, L_ANKLE, L_FOOT = 11, 23, 25, 27, 31
+    R_SH, R_HIP, R_KNEE, R_ANKLE, R_FOOT = 12, 24, 26, 28, 32
+    
+    # Arm side mapping for velocity trace
+    WRIST = 16 if p_side.upper() == 'RIGHT' else 15
+    SHOULDER = 12 if p_side.upper() == 'RIGHT' else 11
+    ELBOW = 14 if p_side.upper() == 'RIGHT' else 13
 
     base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task')
     options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
@@ -123,30 +123,31 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                 lm = result.pose_landmarks[0]
                 ppm = abs(lm[30].y * h - lm[0].y * h) / p_height_m
 
-                # --- 1. LEG & HIP ANGLES (With Flip Fix) ---
+                # --- 1. DUAL LEG CALCULATIONS (No jumping) ---
                 if display_mode in ["All", "Leg Angles Only"]:
-                    # Calculations with Flip Fix
-                    l_hip_raw = get_angle_3d(lm[SHOULDER], lm[L_HIP], lm[L_KNEE])
-                    l_hip_ang = l_hip_raw if l_hip_raw <= 180 else 360 - l_hip_raw
-                    
-                    l_knee_raw = get_angle_3d(lm[L_HIP], lm[L_KNEE], lm[L_ANKLE])
-                    l_knee_ang = l_knee_raw if l_knee_raw <= 180 else 360 - l_knee_raw
-                    
-                    l_ankle_raw = get_angle_3d(lm[L_KNEE], lm[L_ANKLE], lm[L_FOOT])
-                    l_ankle_ang = l_ankle_raw if l_ankle_raw <= 180 else 360 - l_ankle_raw
+                    # LEFT LEG Calculations
+                    l_knee_r = get_angle_3d(lm[L_HIP], lm[L_KNEE], lm[L_ANKLE])
+                    l_ank_r = get_angle_3d(lm[L_KNEE], lm[L_ANKLE], lm[L_FOOT])
+                    left_knee = l_knee_r if l_knee_r <= 180 else 360 - l_knee_r
+                    left_ankle = l_ank_r if l_ank_r <= 180 else 360 - l_ank_r
 
-                    d_knee_raw = get_angle_3d(lm[D_HIP], lm[D_KNEE], lm[D_ANKLE])
-                    d_knee_ang = d_knee_raw if d_knee_raw <= 180 else 360 - d_knee_raw
+                    # RIGHT LEG Calculations
+                    r_knee_r = get_angle_3d(lm[R_HIP], lm[R_KNEE], lm[R_ANKLE])
+                    r_ank_r = get_angle_3d(lm[R_KNEE], lm[R_ANKLE], lm[R_FOOT])
+                    right_knee = r_knee_r if r_knee_r <= 180 else 360 - r_knee_r
+                    right_ankle = r_ank_r if r_ank_r <= 180 else 360 - r_ank_r
 
-                    # Draw Protractors
-                    draw_protractor(frame, lm[L_HIP], lm[SHOULDER], lm[L_KNEE], l_hip_ang, (0, 165, 255)) # Orange Hip
-                    draw_protractor(frame, lm[L_KNEE], lm[L_HIP], lm[L_ANKLE], l_knee_ang, (0, 255, 255)) # Yellow Knee
-                    draw_protractor(frame, lm[L_ANKLE], lm[L_KNEE], lm[L_FOOT], l_ankle_ang, (255, 255, 0)) # Cyan Ankle
-                    
-                    # Skeletal Lines
+                    # --- DRAW LEFT LEG (Yellow/Cyan) ---
+                    draw_protractor(frame, lm[L_KNEE], lm[L_HIP], lm[L_ANKLE], left_knee, (0, 255, 255))
+                    draw_protractor(frame, lm[L_ANKLE], lm[L_KNEE], lm[L_FOOT], left_ankle, (255, 255, 0))
                     cv2.line(frame, (int(lm[L_HIP].x*w), int(lm[L_HIP].y*h)), (int(lm[L_KNEE].x*w), int(lm[L_KNEE].y*h)), (0, 255, 255), 2)
                     cv2.line(frame, (int(lm[L_KNEE].x*w), int(lm[L_KNEE].y*h)), (int(lm[L_ANKLE].x*w), int(lm[L_ANKLE].y*h)), (0, 255, 255), 2)
-                    cv2.line(frame, (int(lm[L_ANKLE].x*w), int(lm[L_ANKLE].y*h)), (int(lm[L_FOOT].x*w), int(lm[L_FOOT].y*h)), (255, 255, 0), 2)
+
+                    # --- DRAW RIGHT LEG (Green/Magenta) ---
+                    draw_protractor(frame, lm[R_KNEE], lm[R_HIP], lm[R_ANKLE], right_knee, (0, 255, 0))
+                    draw_protractor(frame, lm[R_ANKLE], lm[R_KNEE], lm[R_FOOT], right_ankle, (255, 0, 255))
+                    cv2.line(frame, (int(lm[R_HIP].x*w), int(lm[R_HIP].y*h)), (int(lm[R_KNEE].x*w), int(lm[R_KNEE].y*h)), (0, 255, 0), 2)
+                    cv2.line(frame, (int(lm[R_KNEE].x*w), int(lm[R_KNEE].y*h)), (int(lm[R_ANKLE].x*w), int(lm[R_ANKLE].y*h)), (0, 255, 0), 2)
 
                 # --- 2. ARM ANGLES ---
                 if display_mode in ["All", "Arm Angles Only"]:
@@ -217,13 +218,15 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
             cv2.putText(frame, "MECHANICS HUB", (30, 60), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
             cv2.line(frame, (30, 75), (320, 75), (150, 150, 150), 1)
 
-            # Color-coded Metrics
-            if 'l_hip_ang' in locals():
-                cv2.putText(frame, f"HIP ANGLE: {int(l_hip_ang)} deg", (30, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
-            if 'l_knee_ang' in locals():
-                cv2.putText(frame, f"KNEE ANGLE: {int(l_knee_ang)} deg", (30, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-            if 'l_ankle_ang' in locals():
-                cv2.putText(frame, f"ANKLE ANGLE: {int(l_ankle_ang)} deg", (30, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+            # Left Leg Data
+            if 'left_knee' in locals():
+                cv2.putText(frame, f"L-KNEE: {int(left_knee)} deg", (30, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                cv2.putText(frame, f"L-ANKLE: {int(left_ankle)} deg", (30, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+            
+            # Right Leg Data
+            if 'right_knee' in locals():
+                cv2.putText(frame, f"R-KNEE: {int(right_knee)} deg", (30, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                cv2.putText(frame, f"R-ANKLE: {int(right_ankle)} deg", (30, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
             
             # Pitch Data
             cv2.putText(frame, f"PITCH COUNT: {pitch_count}", (30, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
