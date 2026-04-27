@@ -126,11 +126,11 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                 # --- CONDITIONAL DRAWING (Prevents Clutter) ---
                 if display_mode in ["All", "Arm Angles Only"]:
                     elbow_ang = get_angle_3d(lm[SHOULDER], lm[ELBOW], lm[WRIST])
-                    cv2.putText(frame, f"Elbow: {int(elbow_ang)}", (50, 100), 1, 2, (255, 255, 0), 2)
+                    #cv2.putText(frame, f"Elbow: {int(elbow_ang)}", (50, 100), 1, 2, (255, 255, 0), 2)
                 
                 if display_mode in ["All", "Leg Angles Only"]:
                     knee_ang = get_angle_3d(lm[L_HIP], lm[L_KNEE], lm[L_ANKLE])
-                    cv2.putText(frame, f"Knee: {int(knee_ang)}", (50, 150), 1, 2, (0, 255, 255), 2)
+                    #cv2.putText(frame, f"Knee: {int(knee_ang)}", (50, 150), 1, 2, (0, 255, 255), 2)
 
             # Draw Trace
             if display_mode in ["All", "Wrist Trace & Velocity Only"]:
