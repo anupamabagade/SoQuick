@@ -1,11 +1,3 @@
-
-
-def process_back(input_path, output_path, slow_mo_factor=2):
-    """Back View Engine: Hip-Shoulder Separation (X-Factor)."""
-    L_SH, R_SH = 11, 12
-    L_HIP, R_HIP = 23, 24
-
-    base_options = python.BaseOptimport cv2
 import mediapipe as mp
 import numpy as np
 from ultralytics import YOLO
