@@ -26,7 +26,7 @@ st.write("Upload a pitching clip to generate automated velocity and mechanical i
 with st.sidebar:
     st.header("Pitcher Profile")
     st.info("These metrics ensure accurate MPH and scaling calculations.")
-    pitcher_height = st.number_input("Pitcher Height (Inches)", min_value=40, max_value=90, value=72)
+    pitcher_height = st.number_input("Pitcher Height (Inches)", min_value=40, max_value=90, value=62)
     pitcher_side = st.radio("Throwing Hand", ["RIGHT", "LEFT"])
     
     st.divider()
