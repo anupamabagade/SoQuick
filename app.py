@@ -10,21 +10,11 @@ st.set_page_config(
     layout="centered"
 )
 
-# --- Custom Styling ---
-st.markdown("""
-    <style>
-    .main { background-color: #f5f7f9; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; }
-    </style>
-    """, unsafe_allow_html=True)
-
 st.title("⚾ Softball Pitching Analysis")
-st.write("Upload a pitching clip to generate automated velocity and mechanical insights.")
 
 # --- Sidebar: User Profile ---
 with st.sidebar:
     st.header("Pitcher Profile")
-    st.info("These metrics ensure accurate MPH and scaling calculations.")
     pitcher_height = st.number_input("Pitcher Height (Inches)", min_value=40, max_value=90, value=72)
     pitcher_side = st.radio("Throwing Hand", ["RIGHT", "LEFT"])
     
@@ -32,24 +22,22 @@ with st.sidebar:
     st.write("### Analysis Settings")
     slow_mo = st.checkbox("Slow Motion Output (2x)", value=True)
 
-# --- Main UI: Toggle View ---
+# --- NEW: View & Display Toggles ---
 view_mode = st.selectbox(
     "Select Camera View",
-    ["Lateral (Side) View", "Back View"],
-    help="Choose Lateral for velocity/legs or Back View for hip-shoulder separation."
+    ["Lateral (Side) View", "Back View"]
 )
 
+# New dropdown to stop "double printing" clutter
 display_mode = "All"
 if view_mode == "Lateral (Side) View":
     display_mode = st.selectbox(
         "Select Measurement Display",
         [
             "All",
-            "Wrist trace + Peak velocity marker",
-            "Elbow angle",
-            "Hip angle",
-            "Knee angle",
-            "Ankle angle"
+            "Wrist trace + Peak velocity",
+            "Arm angles (Elbow)",
+            "Leg angles (Knee/Ankle)"
         ]
     )
 
@@ -57,19 +45,17 @@ if view_mode == "Lateral (Side) View":
 uploaded_file = st.file_uploader("Upload Pitching Video", type=["mp4", "mov", "avi"])
 
 if uploaded_file is not None:
-    # 1. Create temporary files for processing
     t_in = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
     t_in.write(uploaded_file.read())
-    t_in.close() # Close to allow CV2 to open it
+    t_in.close() 
     
     output_filename = "analyzed_output.mp4"
 
-    # 2. Start Analysis Button
     if st.button("🚀 Run Analysis"):
-        with st.spinner(f"Processing {view_mode}... This may take a minute."):
+        with st.spinner(f"Processing..."):
             try:
                 if view_mode == "Lateral (Side) View":
-                    # Call the Lateral Engine with the new display_mode toggle
+                    # Pass display_mode to the processor
                     processor.process_lateral(
                         input_path=t_in.name,
                         output_path=output_filename,
@@ -79,40 +65,25 @@ if uploaded_file is not None:
                         slow_mo_factor=2 if slow_mo else 1
                     )
                 else:
-                    # Call the Back View Engine
                     processor.process_back(
                         input_path=t_in.name,
                         output_path=output_filename,
                         slow_mo_factor=2 if slow_mo else 1
                     )
 
-                # 3. Display Success & Video
                 if os.path.exists(output_filename):
                     st.success("Analysis Complete!")
-                    st.video(output_filename)
+                    st.video(output_filename) # If black screen persists, see processor notes
                     
-                    # Download Button
                     with open(output_filename, "rb") as file:
                         st.download_button(
-                            label="📥 Download Analyzed Video",
+                            label="📥 Download Video",
                             data=file,
-                            file_name=f"PitchAnalysis_{view_mode.split()[0]}.mp4",
+                            file_name="PitchAnalysis.mp4",
                             mime="video/mp4"
                         )
-                else:
-                    st.error("Analysis failed to generate output video.")
-
             except Exception as e:
                 st.error(f"An error occurred: {e}")
-            
             finally:
-                # Cleanup temporary file
                 if os.path.exists(t_in.name):
                     os.remove(t_in.name)
-
-else:
-    st.info("Please upload a video file to begin.")
-
-# --- Footer ---
-st.divider()
-st.caption("Powered by MediaPipe & YOLOv8.")
