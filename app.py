@@ -27,7 +27,7 @@ with st.sidebar:
     st.header("Pitcher Profile")
     st.info("These metrics ensure accurate MPH and scaling calculations.")
     pitcher_height = st.number_input("Pitcher Height (Inches)", min_value=40, max_value=90, value=62)
-    pitcher_side = st.radio("Throwing Hand", ["RIGHT", "LEFT"])
+    pitcher_side = st.radio("Throwing Hand", ["Right", "Left"])
     
     st.divider()
     st.write("### Analysis Settings")
