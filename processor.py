@@ -156,7 +156,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                     cv2.line(frame, (int(lm[SHOULDER].x*w), int(lm[SHOULDER].y*h)), (int(lm[ELBOW].x*w), int(lm[ELBOW].y*h)), (255, 255, 0), 2)
                     cv2.line(frame, (int(lm[ELBOW].x*w), int(lm[ELBOW].y*h)), (int(lm[WRIST].x*w), int(lm[WRIST].y*h)), (255, 255, 0), 2)
 
-                # --- 3. WRIST TRACE ---
+                # --- 3. WRIST TRACE & VELOCITY ---
                 if display_mode in ["All", "Wrist Trace & Velocity Only"]:
                     raw_pos = np.array([lm[WRIST].x * w, lm[WRIST].y * h])
                     if smoothed_pos is None: smoothed_pos = raw_pos
@@ -170,23 +170,44 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                             is_pitching = True
                             trail_history.append((int(smoothed_pos[0]), int(smoothed_pos[1]), cur_v))
                             current_v_list.append(cur_v)
-                            current_x_coords.append(smoothed_pos[0]); current_y_coords.append(smoothed_pos[1])
+                            current_x_coords.append(smoothed_pos[0])
+                            current_y_coords.append(smoothed_pos[1])
                         
                         if is_pitching and cur_v < v_stop_thresh:
                             low_speed_timer += 1
                             if low_speed_timer > stop_buffer:
                                 pitch_count += 1
+                                # --- PEAK VELOCITY MARKER LOGIC ---
                                 p_idx = np.argmax(current_v_list)
-                                peak_marker.append((int(current_x_coords[p_idx]), int(current_y_coords[p_idx]), round(current_v_list[p_idx]*2.23694, 1)))
-                                is_pitching, low_speed_timer, current_v_list, current_x_coords, current_y_coords = False, 0, [], [], []
+                                peak_x = int(current_x_coords[p_idx])
+                                peak_y = int(current_y_coords[p_idx])
+                                peak_mph = round(current_v_list[p_idx] * 2.23694, 1)
+                                
+                                # Store the marker: (x, y, mph_text)
+                                peak_marker.append((peak_x, peak_y, peak_mph))
+                                
+                                # Reset for next pitch
+                                is_pitching, low_speed_timer = False, 0
+                                current_v_list, current_x_coords, current_y_coords = [], [], []
                         
                         prev_vel = cur_v
                     prev_pos = smoothed_pos.copy()
 
+                    # --- DRAWING THE TRACE & PEAK MARKERS ---
+                    # 1. Draw the Heatmap Trail
                     for i in range(1, len(trail_history)):
-                        cv2.line(frame, trail_history[i-1][:2], trail_history[i][:2], get_heatmap_color(trail_history[i][2]), 10, cv2.LINE_AA)
+                        cv2.line(frame, trail_history[i-1][:2], trail_history[i][:2], 
+                                 get_heatmap_color(trail_history[i][2]), 10, cv2.LINE_AA)
+                    
+                    # 2. Draw the Peak Markers (Circle + Text)
                     for px, py, mph in peak_marker:
-                        cv2.putText(frame, f"{mph} mph", (px + 20, py), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                        # Draw a bright outer ring and a white center dot
+                        cv2.circle(frame, (px, py), 12, (0, 255, 255), 3, cv2.LINE_AA) # Yellow ring
+                        cv2.circle(frame, (px, py), 4, (255, 255, 255), -1, cv2.LINE_AA) # White center
+                        
+                        # Add the MPH text right above the point
+                        cv2.putText(frame, f"{mph} MPH", (px - 40, py - 20), 
+                                    cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
 
             # --- UPDATED ORIGINAL DASHBOARD ---
             # Box height increased from 280 to 360 to fit new angles
