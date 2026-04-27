@@ -228,30 +228,39 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                         cv2.putText(frame, f"{mph} MPH", (px - 40, py - 20), 
                                     cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
 
-            # --- UPDATED ORIGINAL DASHBOARD ---
-            # Box height increased from 280 to 360 to fit new angles
-            cv2.rectangle(frame, (10, 20), (350, 360), (0, 0, 0), -1) 
-            cv2.rectangle(frame, (10, 20), (350, 360), (100, 100, 100), 2) 
+            # --- CLEANED DASHBOARD (Top Left) ---
+            # Box size adjusted for better spacing
+            cv2.rectangle(frame, (10, 20), (380, 450), (0, 0, 0), -1) 
+            cv2.rectangle(frame, (10, 20), (380, 450), (100, 100, 100), 2) 
 
-            cv2.putText(frame, "MECHANICS HUB", (30, 60), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
-            cv2.line(frame, (30, 75), (320, 75), (150, 150, 150), 1)
-            
+            # Header
+            cv2.putText(frame, "MECHANICS HUB", (30, 65), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
+            cv2.line(frame, (30, 80), (350, 80), (150, 150, 150), 1)
+
+            # --- Row 1: Camera Facing Hip ---
             if 'active_hip_ang' in locals():
-                cv2.putText(frame, f"{hip_label}: {int(active_hip_ang)} deg", (30, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, hip_color, 2)
+                cv2.putText(frame, f"{hip_label}: {int(active_hip_ang)} deg", (30, 125), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2) # MAGENTA
 
-            # Left Leg Data
+            # --- Row 2: Left Leg Data ---
             if 'left_knee' in locals():
-                cv2.putText(frame, f"L-KNEE: {int(left_knee)} deg", (30, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                cv2.putText(frame, f"L-ANKLE: {int(left_ankle)} deg", (30, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-            
-            # Right Leg Data
+                cv2.putText(frame, f"L-KNEE: {int(left_knee)} deg", (30, 170), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2) # CYAN
+                cv2.putText(frame, f"L-ANKLE: {int(left_ankle)} deg", (30, 215), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2) # YELLOW
+
+            # --- Row 3: Right Leg Data ---
             if 'right_knee' in locals():
-                cv2.putText(frame, f"R-KNEE: {int(right_knee)} deg", (30, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                cv2.putText(frame, f"R-ANKLE: {int(right_ankle)} deg", (30, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
-            
-            # Pitch Data
-            cv2.putText(frame, f"PITCH COUNT: {pitch_count}", (30, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame, f"LIVE SPEED: {prev_vel * 2.23694:.1f} MPH", (30, 310), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                cv2.putText(frame, f"R-KNEE: {int(right_knee)} deg", (30, 260), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)   # GREEN
+                cv2.putText(frame, f"R-ANKLE: {int(right_ankle)} deg", (30, 305), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 105, 255), 2) # PURPLE/VIOLET
+
+            # --- Row 4: Pitch Data ---
+            cv2.putText(frame, f"SPEED: {prev_vel * 2.23694:.1f} MPH", (30, 370), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            cv2.putText(frame, f"COUNT: {pitch_count}", (30, 415), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
             out.write(frame)
             frame_count += 1
