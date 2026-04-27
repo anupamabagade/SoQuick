@@ -144,6 +144,13 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
         out.release()
 
 # Note: Keep your existing process_back function here, but update its codec to 'mp4v'ions(model_asset_path='pose_landmarker_heavy.task')
+def process_back(input_path, output_path, slow_mo_factor=2):
+    """Back View Engine: Hip-Shoulder Separation (X-Factor)."""
+    # Define missing landmark indices
+    L_SH, R_SH = 11, 12
+    L_HIP, R_HIP = 23, 24
+
+    base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task')
     options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
 
     with vision.PoseLandmarker.create_from_options(options) as landmarker:
@@ -151,8 +158,8 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
         fps = cap.get(cv2.CAP_PROP_FPS)
         w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-        # slow_mo_factor adjusts output FPS for browser playback
+        
+        # Using mp4v for compatibility (app.py handles the ffmpeg conversion to fix black screen)
         out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps / slow_mo_factor, (w, h))
 
         max_separation = 0
@@ -175,7 +182,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
             if result.pose_landmarks:
                 lm = result.pose_landmarks[0]
                 
-                # Calculate angles
+                # Calculate rotation of shoulder line and hip line
                 s_ang = abs(get_line_rotation(lm[L_SH], lm[R_SH]))
                 h_ang = abs(get_line_rotation(lm[L_HIP], lm[R_HIP]))
                 separation = abs(s_ang - h_ang)
@@ -208,8 +215,8 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
 
         # Freeze Frame Logic
         if final_frame is not None:
-            for _ in range(int((fps / slow_mo_factor) * FREEZE_DURATION_SEC)):
+            for _ in range(int((fps / slow_mo_factor) * 3)): # Freeze for 3 seconds
                 out.write(final_frame)
 
         cap.release()
-        out.release()
+        out.release()    
