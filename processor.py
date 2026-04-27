@@ -21,6 +21,10 @@ def get_angle_3d(p1, p2, p3):
     unit_v2 = v2 / np.linalg.norm(v2)
     return np.degrees(np.arccos(np.clip(np.dot(unit_v1, unit_v2), -1.0, 1.0)))
 
+def get_line_rotation(p1, p2):
+    """Calculates the 2D rotation angle (in degrees) of a line between two points."""
+    return np.degrees(np.arctan2(p2.y - p1.y, p2.x - p1.x))
+
 def draw_sleek_label(img, text, pos, color=(255, 255, 255), base_scale=0.8, thickness_mult=1):
     """Robust UI label with background box and accent bar."""
     h, w = img.shape[:2]
