@@ -84,6 +84,8 @@ def draw_protractor(img, p_center, p_start, p_end, angle_val, color):
     
 def process_lateral(input_path, output_path, p_height_inches, p_side, display_mode="All", slow_mo_factor=2):
     p_height_m = p_height_inches * 0.0254
+    v_start_thresh, v_stop_thresh = 3.5, 5.0
+    stop_buffer = 25
     
     # Landmark Mapping
     if p_side.upper() == 'RIGHT':
@@ -105,8 +107,10 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
         out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps / slow_mo_factor, (w, h))
 
         trail_history, peak_marker = [], []
-        prev_pos, smoothed_pos = None, None
-        
+        prev_pos, smoothed_pos, prev_vel = None, None, 0
+        is_pitching, pitch_count, low_speed_timer = False, 0, 0
+        current_x_coords, current_y_coords, current_v_list = [], [], []
+
         frame_count = 0
         while cap.isOpened():
             ret, frame = cap.read()
@@ -119,39 +123,73 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                 lm = result.pose_landmarks[0]
                 ppm = abs(lm[30].y * h - lm[0].y * h) / p_height_m
 
-                # --- CONDITIONAL DRAWING BASED ON SELECTION ---
-                
-                # 1. Arm Angles
+                # --- 1. LEG ANGLES (Lead & Drive) ---
+                if display_mode in ["All", "Leg Angles Only"]:
+                    # Lead Leg
+                    l_knee_ang = get_angle_3d(lm[L_HIP], lm[L_KNEE], lm[L_ANKLE])
+                    l_ankle_ang = get_angle_3d(lm[L_KNEE], lm[L_ANKLE], lm[L_FOOT])
+                    draw_protractor(frame, lm[L_KNEE], lm[L_HIP], lm[L_ANKLE], l_knee_ang, (0, 255, 255))
+                    draw_protractor(frame, lm[L_ANKLE], lm[L_KNEE], lm[L_FOOT], l_ankle_ang, (0, 165, 255))
+                    
+                    # Drive Leg
+                    d_knee_ang = get_angle_3d(lm[D_HIP], lm[D_KNEE], lm[D_ANKLE])
+                    d_ankle_ang = get_angle_3d(lm[D_KNEE], lm[D_ANKLE], lm[D_FOOT])
+                    draw_protractor(frame, lm[D_KNEE], lm[D_HIP], lm[D_ANKLE], d_knee_ang, (0, 255, 0))
+                    draw_protractor(frame, lm[D_ANKLE], lm[D_KNEE], lm[D_FOOT], d_ankle_ang, (255, 0, 255))
+
+                    # Skeletal Lines for Legs
+                    cv2.line(frame, (int(lm[L_HIP].x*w), int(lm[L_HIP].y*h)), (int(lm[L_KNEE].x*w), int(lm[L_KNEE].y*h)), (0, 255, 255), 2)
+                    cv2.line(frame, (int(lm[L_KNEE].x*w), int(lm[L_KNEE].y*h)), (int(lm[L_ANKLE].x*w), int(lm[L_ANKLE].y*h)), (0, 255, 255), 2)
+                    cv2.line(frame, (int(lm[D_HIP].x*w), int(lm[D_HIP].y*h)), (int(lm[D_KNEE].x*w), int(lm[D_KNEE].y*h)), (0, 255, 0), 2)
+                    cv2.line(frame, (int(lm[D_KNEE].x*w), int(lm[D_KNEE].y*h)), (int(lm[D_ANKLE].x*w), int(lm[D_ANKLE].y*h)), (0, 255, 0), 2)
+
+                # --- 2. ARM ANGLES (Throwing Elbow) ---
                 if display_mode in ["All", "Arm Angles Only"]:
                     elbow_ang = get_angle_3d(lm[SHOULDER], lm[ELBOW], lm[WRIST])
                     draw_protractor(frame, lm[ELBOW], lm[SHOULDER], lm[WRIST], elbow_ang, (255, 255, 0))
                     cv2.line(frame, (int(lm[SHOULDER].x*w), int(lm[SHOULDER].y*h)), (int(lm[ELBOW].x*w), int(lm[ELBOW].y*h)), (255, 255, 0), 2)
                     cv2.line(frame, (int(lm[ELBOW].x*w), int(lm[ELBOW].y*h)), (int(lm[WRIST].x*w), int(lm[WRIST].y*h)), (255, 255, 0), 2)
 
-                # 2. Leg Angles
-                if display_mode in ["All", "Leg Angles Only"]:
-                    l_knee_ang = get_angle_3d(lm[L_HIP], lm[L_KNEE], lm[L_ANKLE])
-                    draw_protractor(frame, lm[L_KNEE], lm[L_HIP], lm[L_ANKLE], l_knee_ang, (0, 255, 255))
-                    # ... add other leg lines/protractors here ...
-
-                # 3. Wrist Trace & Velocity
+                # --- 3. WRIST TRACE & VELOCITY ---
                 if display_mode in ["All", "Wrist Trace & Velocity Only"]:
                     raw_pos = np.array([lm[WRIST].x * w, lm[WRIST].y * h])
                     if smoothed_pos is None: smoothed_pos = raw_pos
                     smoothed_pos = (SMOOTHING_FACTOR * raw_pos) + ((1 - SMOOTHING_FACTOR) * smoothed_pos)
-                    
+
                     if prev_pos is not None:
-                        cur_v = (np.linalg.norm(smoothed_pos - prev_pos) / ppm) * fps
-                        trail_history.append((int(smoothed_pos[0]), int(smoothed_pos[1]), cur_v))
+                        dt = 1 / fps
+                        cur_v = (np.linalg.norm(smoothed_pos - prev_pos) / ppm) / dt
                         
-                    for i in range(1, len(trail_history)):
-                        cv2.line(frame, trail_history[i-1][:2], trail_history[i][:2], get_heatmap_color(trail_history[i][2]), 10)
-                    
+                        if cur_v > v_start_thresh:
+                            is_pitching = True
+                            trail_history.append((int(smoothed_pos[0]), int(smoothed_pos[1]), cur_v))
+                            current_v_list.append(cur_v)
+                            current_x_coords.append(smoothed_pos[0]); current_y_coords.append(smoothed_pos[1])
+                        
+                        if is_pitching and cur_v < v_stop_thresh:
+                            low_speed_timer += 1
+                            if low_speed_timer > stop_buffer:
+                                pitch_count += 1
+                                p_idx = np.argmax(current_v_list)
+                                peak_marker.append((int(current_x_coords[p_idx]), int(current_y_coords[p_idx]), round(current_v_list[p_idx]*MS_TO_MPH, 1)))
+                                is_pitching, low_speed_timer, current_v_list, current_x_coords, current_y_coords = False, 0, [], [], []
+                        
+                        prev_vel = cur_v
                     prev_pos = smoothed_pos.copy()
+
+                    # Draw Trails & Markers
+                    for i in range(1, len(trail_history)):
+                        cv2.line(frame, trail_history[i-1][:2], trail_history[i][:2], get_heatmap_color(trail_history[i][2]), 10, cv2.LINE_AA)
+                    for px, py, mph in peak_marker:
+                        cv2.putText(frame, f"{mph} mph", (px + 20, py), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+            # --- HUD ---
+            draw_sleek_label(frame, f"PITCHES: {pitch_count}", (20, 100), (0, 255, 255))
+            draw_sleek_label(frame, f"LIVE: {prev_vel * MS_TO_MPH:.1f} MPH", (20, 180), (255, 255, 255))
 
             out.write(frame)
             frame_count += 1
-            
+
         cap.release()
         out.release()
 
