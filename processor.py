@@ -125,6 +125,24 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
 
                 # --- 1. DUAL LEG CALCULATIONS (No jumping) ---
                 if display_mode in ["All", "Leg Angles Only"]:
+                    # 1. Determine which hip is closer (Lower Z = Closer)
+                    if lm[L_HIP].z < lm[R_HIP].z:
+                        # Left Hip is facing camera
+                        hip_label = "L-HIP"
+                        hip_color = (0, 165, 255) # Orange
+                        hip_raw = get_angle_3d(lm[L_SH], lm[L_HIP], lm[L_KNEE])
+                        active_hip_ang = hip_raw if hip_raw <= 180 else 360 - hip_raw
+                        # Draw Left Hip Protractor
+                        draw_protractor(frame, lm[L_HIP], lm[L_SH], lm[L_KNEE], active_hip_ang, hip_color)
+                    else:
+                        # Right Hip is facing camera
+                        hip_label = "R-HIP"
+                        hip_color = (255, 0, 255) # Magenta
+                        hip_raw = get_angle_3d(lm[R_SH], lm[R_HIP], lm[R_KNEE])
+                        active_hip_ang = hip_raw if hip_raw <= 180 else 360 - hip_raw
+                        # Draw Right Hip Protractor
+                        draw_protractor(frame, lm[R_HIP], lm[R_SH], lm[R_KNEE], active_hip_ang, hip_color)
+                    
                     # LEFT LEG Calculations
                     l_knee_r = get_angle_3d(lm[L_HIP], lm[L_KNEE], lm[L_ANKLE])
                     l_ank_r = get_angle_3d(lm[L_KNEE], lm[L_ANKLE], lm[L_FOOT])
@@ -217,6 +235,9 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
 
             cv2.putText(frame, "MECHANICS HUB", (30, 60), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
             cv2.line(frame, (30, 75), (320, 75), (150, 150, 150), 1)
+            
+            if 'active_hip_ang' in locals():
+                cv2.putText(frame, f"{hip_label}: {int(active_hip_ang)} deg", (30, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, hip_color, 2)
 
             # Left Leg Data
             if 'left_knee' in locals():
@@ -229,8 +250,8 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                 cv2.putText(frame, f"R-ANKLE: {int(right_ankle)} deg", (30, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
             
             # Pitch Data
-            cv2.putText(frame, f"PITCH COUNT: {pitch_count}", (30, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame, f"LIVE SPEED: {prev_vel * 2.23694:.1f} MPH", (30, 300), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            cv2.putText(frame, f"PITCH COUNT: {pitch_count}", (30, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame, f"LIVE SPEED: {prev_vel * 2.23694:.1f} MPH", (30, 310), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
             out.write(frame)
             frame_count += 1
