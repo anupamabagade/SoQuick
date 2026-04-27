@@ -123,39 +123,44 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                 lm = result.pose_landmarks[0]
                 ppm = abs(lm[30].y * h - lm[0].y * h) / p_height_m
 
-                # --- 1. LEG & HIP ANGLES ---
+                # --- 1. LEG & HIP ANGLES (With Flip Fix) ---
                 if display_mode in ["All", "Leg Angles Only"]:
-                    # Lead Side (Yellow/Orange)
-                    l_hip_ang = get_angle_3d(lm[SHOULDER], lm[L_HIP], lm[L_KNEE])
-                    l_knee_ang = get_angle_3d(lm[L_HIP], lm[L_KNEE], lm[L_ANKLE])
-                    l_ankle_ang = get_angle_3d(lm[L_KNEE], lm[L_ANKLE], lm[L_FOOT])
+                    # Calculations with Flip Fix
+                    l_hip_raw = get_angle_3d(lm[SHOULDER], lm[L_HIP], lm[L_KNEE])
+                    l_hip_ang = l_hip_raw if l_hip_raw <= 180 else 360 - l_hip_raw
                     
-                    # Drive Side (Green/Purple)
-                    d_hip_ang = get_angle_3d(lm[SHOULDER], lm[D_HIP], lm[D_KNEE])
-                    d_knee_ang = get_angle_3d(lm[D_HIP], lm[D_KNEE], lm[D_ANKLE])
+                    l_knee_raw = get_angle_3d(lm[L_HIP], lm[L_KNEE], lm[L_ANKLE])
+                    l_knee_ang = l_knee_raw if l_knee_raw <= 180 else 360 - l_knee_raw
                     
-                    # DRAW PROTRACTORS
-                    # Hip Angle (Lead)
-                    draw_protractor(frame, lm[L_HIP], lm[SHOULDER], lm[L_KNEE], l_hip_ang, (0, 165, 255)) 
-                    # Knee Angle (Lead)
-                    draw_protractor(frame, lm[L_KNEE], lm[L_HIP], lm[L_ANKLE], l_knee_ang, (0, 255, 255))
+                    l_ankle_raw = get_angle_3d(lm[L_KNEE], lm[L_ANKLE], lm[L_FOOT])
+                    l_ankle_ang = l_ankle_raw if l_ankle_raw <= 180 else 360 - l_ankle_raw
+
+                    d_knee_raw = get_angle_3d(lm[D_HIP], lm[D_KNEE], lm[D_ANKLE])
+                    d_knee_ang = d_knee_raw if d_knee_raw <= 180 else 360 - d_knee_raw
+
+                    # Draw Protractors
+                    draw_protractor(frame, lm[L_HIP], lm[SHOULDER], lm[L_KNEE], l_hip_ang, (0, 165, 255)) # Orange Hip
+                    draw_protractor(frame, lm[L_KNEE], lm[L_HIP], lm[L_ANKLE], l_knee_ang, (0, 255, 255)) # Yellow Knee
+                    draw_protractor(frame, lm[L_ANKLE], lm[L_KNEE], lm[L_FOOT], l_ankle_ang, (255, 255, 0)) # Cyan Ankle
                     
-                    # DRIVE LEG LINES (Green)
-                    cv2.line(frame, (int(lm[D_HIP].x*w), int(lm[D_HIP].y*h)), (int(lm[D_KNEE].x*w), int(lm[D_KNEE].y*h)), (0, 255, 0), 2)
-                    cv2.line(frame, (int(lm[D_KNEE].x*w), int(lm[D_KNEE].y*h)), (int(lm[D_ANKLE].x*w), int(lm[D_ANKLE].y*h)), (0, 255, 0), 2)
-                
-                # --- 2. ARM ANGLES (Throwing Elbow) ---
+                    # Skeletal Lines
+                    cv2.line(frame, (int(lm[L_HIP].x*w), int(lm[L_HIP].y*h)), (int(lm[L_KNEE].x*w), int(lm[L_KNEE].y*h)), (0, 255, 255), 2)
+                    cv2.line(frame, (int(lm[L_KNEE].x*w), int(lm[L_KNEE].y*h)), (int(lm[L_ANKLE].x*w), int(lm[L_ANKLE].y*h)), (0, 255, 255), 2)
+                    cv2.line(frame, (int(lm[L_ANKLE].x*w), int(lm[L_ANKLE].y*h)), (int(lm[L_FOOT].x*w), int(lm[L_FOOT].y*h)), (255, 255, 0), 2)
+
+                # --- 2. ARM ANGLES ---
                 if display_mode in ["All", "Arm Angles Only"]:
-                    elbow_ang = get_angle_3d(lm[SHOULDER], lm[ELBOW], lm[WRIST])
+                    elbow_raw = get_angle_3d(lm[SHOULDER], lm[ELBOW], lm[WRIST])
+                    elbow_ang = elbow_raw if elbow_raw <= 180 else 360 - elbow_raw
                     draw_protractor(frame, lm[ELBOW], lm[SHOULDER], lm[WRIST], elbow_ang, (255, 255, 0))
                     cv2.line(frame, (int(lm[SHOULDER].x*w), int(lm[SHOULDER].y*h)), (int(lm[ELBOW].x*w), int(lm[ELBOW].y*h)), (255, 255, 0), 2)
                     cv2.line(frame, (int(lm[ELBOW].x*w), int(lm[ELBOW].y*h)), (int(lm[WRIST].x*w), int(lm[WRIST].y*h)), (255, 255, 0), 2)
 
-                # --- 3. WRIST TRACE & VELOCITY ---
+                # --- 3. WRIST TRACE ---
                 if display_mode in ["All", "Wrist Trace & Velocity Only"]:
                     raw_pos = np.array([lm[WRIST].x * w, lm[WRIST].y * h])
                     if smoothed_pos is None: smoothed_pos = raw_pos
-                    smoothed_pos = (SMOOTHING_FACTOR * raw_pos) + ((1 - SMOOTHING_FACTOR) * smoothed_pos)
+                    smoothed_pos = (0.2 * raw_pos) + (0.8 * smoothed_pos)
 
                     if prev_pos is not None:
                         dt = 1 / fps
@@ -172,43 +177,36 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                             if low_speed_timer > stop_buffer:
                                 pitch_count += 1
                                 p_idx = np.argmax(current_v_list)
-                                peak_marker.append((int(current_x_coords[p_idx]), int(current_y_coords[p_idx]), round(current_v_list[p_idx]*MS_TO_MPH, 1)))
+                                peak_marker.append((int(current_x_coords[p_idx]), int(current_y_coords[p_idx]), round(current_v_list[p_idx]*2.23694, 1)))
                                 is_pitching, low_speed_timer, current_v_list, current_x_coords, current_y_coords = False, 0, [], [], []
                         
                         prev_vel = cur_v
                     prev_pos = smoothed_pos.copy()
 
-                    # Draw Trails & Markers
                     for i in range(1, len(trail_history)):
                         cv2.line(frame, trail_history[i-1][:2], trail_history[i][:2], get_heatmap_color(trail_history[i][2]), 10, cv2.LINE_AA)
                     for px, py, mph in peak_marker:
                         cv2.putText(frame, f"{mph} mph", (px + 20, py), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
-            # --- HUD ---
+            # --- UPDATED ORIGINAL DASHBOARD ---
+            # Box height increased from 280 to 360 to fit new angles
+            cv2.rectangle(frame, (10, 20), (350, 360), (0, 0, 0), -1) 
+            cv2.rectangle(frame, (10, 20), (350, 360), (100, 100, 100), 2) 
 
-            # --- ORIGINAL DASHBOARD (Top Left) ---
-            # Define colors to match your protractors
-            color_lead = (0, 255, 255)  # Yellow
-            color_drive = (0, 255, 0)   # Green
-            color_text = (255, 255, 255) # White
-
-            # Background Box for the Dashboard
-            cv2.rectangle(frame, (10, 20), (350, 280), (0, 0, 0), -1) # Solid black box
-            cv2.rectangle(frame, (10, 20), (350, 280), (100, 100, 100), 2) # Grey border
-
-            # Title
-            cv2.putText(frame, "MECHANICS HUB", (30, 60), cv2.FONT_HERSHEY_DUPLEX, 0.8, color_text, 2)
+            cv2.putText(frame, "MECHANICS HUB", (30, 60), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
             cv2.line(frame, (30, 75), (320, 75), (150, 150, 150), 1)
 
-            # Leg Metrics (Color Matched)
+            # Color-coded Metrics
+            if 'l_hip_ang' in locals():
+                cv2.putText(frame, f"HIP ANGLE: {int(l_hip_ang)} deg", (30, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
             if 'l_knee_ang' in locals():
-                cv2.putText(frame, f"LEAD LEG: {int(l_knee_ang)} deg", (30, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_lead, 2)
-            if 'd_knee_ang' in locals():
-                cv2.putText(frame, f"DRIVE LEG: {int(d_knee_ang)} deg", (30, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_drive, 2)
+                cv2.putText(frame, f"KNEE ANGLE: {int(l_knee_ang)} deg", (30, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            if 'l_ankle_ang' in locals():
+                cv2.putText(frame, f"ANKLE ANGLE: {int(l_ankle_ang)} deg", (30, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
             
             # Pitch Data
-            cv2.putText(frame, f"PITCH COUNT: {pitch_count}", (30, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_text, 2)
-            cv2.putText(frame, f"LIVE SPEED: {prev_vel * MS_TO_MPH:.1f} MPH", (30, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            cv2.putText(frame, f"PITCH COUNT: {pitch_count}", (30, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame, f"LIVE SPEED: {prev_vel * 2.23694:.1f} MPH", (30, 300), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
             out.write(frame)
             frame_count += 1
