@@ -21,6 +21,34 @@ def get_angle_3d(p1, p2, p3):
     unit_v2 = v2 / np.linalg.norm(v2)
     return np.degrees(np.arccos(np.clip(np.dot(unit_v1, unit_v2), -1.0, 1.0)))
 
+def draw_sleek_label(img, text, pos, color=(255, 255, 255), base_scale=0.8, thickness_mult=1):
+    """Robust UI label with background box and accent bar."""
+    h, w = img.shape[:2]
+    ui_scale = max(0.45, (w / 1000) * base_scale)
+    thickness = max(1, int(ui_scale * 2 * thickness_mult))
+    padding = int(25 * (w / 1000))
+    bar_width = max(4, int(8 * (w / 1000)))
+    
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    (txt_w, txt_h), baseline = cv2.getTextSize(text, font, ui_scale, thickness)
+    
+    x, y = int(pos[0]), int(pos[1])
+    
+    # Alignment logic
+    if x == -1: x = int((w - txt_w) / 2) # Center
+    elif x == w: x = int(w - txt_w - padding - 10) # Right-align
+    
+    # Boundary checks
+    if x + txt_w + padding > w: x = int(w - txt_w - padding - 10)
+    if x - padding < 0: x = int(padding + 5)
+
+    overlay = img.copy()
+    cv2.rectangle(overlay, (x-padding, y-txt_h-padding), (x+txt_w+padding, y+baseline+padding), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.6, img, 0.4, 0, img)
+    cv2.rectangle(img, (x-padding, y-txt_h-padding), (x-padding+bar_width, y+baseline+padding), color, -1)
+    cv2.putText(img, text, (x, y), font, ui_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+    return (txt_w, txt_h)
+
 def process_lateral(input_path, output_path, p_height_inches, p_side, display_mode="All", slow_mo_factor=2):
     p_height_m = p_height_inches * 0.0254
     yolo_model = YOLO("yolov8n-pose.pt") # YOLO is best for fast movement
