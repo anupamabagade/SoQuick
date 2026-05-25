@@ -19,8 +19,12 @@ with st.sidebar:
     # Contextual inputs based on the toggle
     if view_type == "Lateral (Trace)":
         st.subheader("Lateral Parameters")
-        p_height = st.number_input("Pitcher Height (inches)", value=73)
+        p_height = st.number_input("Pitcher Height (inches)", value=62)
         p_side = st.selectbox("Pitching Arm", ["Right", "Left"])
+        display_mode = st.selectbox(
+            "Measurements to Display",
+            ["All", "Wrist Trace & Velocity Only", "Arm Angles Only", "Leg Angles Only"]
+        )
         slow_mo = st.slider("Slow Motion Factor", min_value=1, max_value=4, value=2)
     else:
         slow_mo = st.slider("Slow Motion Factor", min_value=1, max_value=4, value=2)
@@ -33,7 +37,7 @@ uploaded_file = st.file_uploader("Upload Pitching Video", type=['mp4', 'mov', 'a
 if uploaded_file:
     # 1. Save upload to disk
     input_path = "input_temp.mp4"
-    raw_output = "raw_analyzed.avi"
+    raw_output = "raw_analyzed.mp4"
     web_ready = "web_ready.mp4"
     
     with open(input_path, "wb") as f:
@@ -51,7 +55,7 @@ if uploaded_file:
             # This calls the specific functions in your processor.py
             if view_type == "Lateral (Trace)":
                 status.update(label="Calculating Velocity & Leg Drive...")
-                processor.process_lateral(input_path, raw_output, p_height, p_side, slow_mo_factor=slow_mo)
+                processor.process_lateral(input_path, raw_output, p_height, p_side, display_mode=display_mode, slow_mo_factor=slow_mo)
             else:
                 status.update(label="Analyzing pitch...")
                 processor.process_back(input_path, raw_output, slow_mo_factor=slow_mo)
