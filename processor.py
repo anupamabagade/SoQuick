@@ -10,8 +10,10 @@ from mediapipe.tasks.python import vision
 MS_TO_MPH = 2.23694
 MAX_VELOCITY_HEATMAP = 35 
 GRAVITY = 9.80665 
-SMOOTHING_FACTOR = 0.6 
+SMOOTHING_FACTOR = 0.35
 FREEZE_DURATION_SEC = 3
+VISIBILITY_THRESHOLD = 0.5
+MAX_PHYSICAL_VELOCITY = 35.0  # m/s (~78 mph)
 
 # --- Helpers ---
 def get_heatmap_color(velocity_metric, max_val=MAX_VELOCITY_HEATMAP):
@@ -173,35 +175,72 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
                 # separation = abs(s_ang - h_ang)
 
                 # 2. Velocity Tracking
-                raw_pos = np.array([lm[WRIST].x * w, lm[WRIST].y * h])
-                if smoothed_pos is None: smoothed_pos = raw_pos
-                else: smoothed_pos = (SMOOTHING_FACTOR * raw_pos) + ((1 - SMOOTHING_FACTOR) * smoothed_pos)
+                wrist_visible = lm[WRIST].visibility >= VISIBILITY_THRESHOLD
 
-                if prev_pos is not None:
-                    dt = 1 / fps
-                    cur_v = (np.linalg.norm(smoothed_pos - prev_pos) / ppm) / dt
-                    
-                    if cur_v > v_start_thresh and not is_pitching:
-                        is_pitching = True
-                        current_pitch_buffer, current_x_coords, current_y_coords = [], [], []
-                    
+                if wrist_visible:
+                    raw_pos = np.array([lm[WRIST].x * w, lm[WRIST].y * h])
+                    if smoothed_pos is None:
+                        smoothed_pos = raw_pos
+                    else:
+                        smoothed_pos = (SMOOTHING_FACTOR * raw_pos) + ((1 - SMOOTHING_FACTOR) * smoothed_pos)
+
+                    if prev_pos is not None:
+                        dt = 1 / fps
+                        cur_v = (np.linalg.norm(smoothed_pos - prev_pos) / ppm) / dt
+
+                        # Layer 3: discard physically impossible spikes
+                        if cur_v > MAX_PHYSICAL_VELOCITY:
+                            if is_pitching:
+                                if prev_vel < v_stop_thresh:
+                                    low_speed_timer += 1
+                                else:
+                                    low_speed_timer = 0
+                                if low_speed_timer > stop_buffer:
+                                    pitch_count += 1
+                                    v_list = [r[2] for r in current_pitch_buffer]
+                                    p_idx = np.argmax(v_list)
+                                    peak_marker.append((int(current_x_coords[p_idx]), int(current_y_coords[p_idx]), round(v_list[p_idx]*MS_TO_MPH, 1)))
+                                    is_pitching, low_speed_timer = False, 0
+                        else:
+                            if cur_v > v_start_thresh and not is_pitching:
+                                is_pitching = True
+                                current_pitch_buffer, current_x_coords, current_y_coords = [], [], []
+
+                            if is_pitching:
+                                accel_m = abs(cur_v - prev_vel) / dt
+                                current_pitch_buffer.append([pitch_count+1, timestamp_ms, cur_v, accel_m, accel_m/GRAVITY])
+                                current_x_coords.append(smoothed_pos[0])
+                                current_y_coords.append(smoothed_pos[1])
+                                trail_history.append((int(smoothed_pos[0]), int(smoothed_pos[1]), cur_v))
+
+                                if cur_v < v_stop_thresh:
+                                    low_speed_timer += 1
+                                else:
+                                    low_speed_timer = 0
+
+                                if low_speed_timer > stop_buffer:
+                                    pitch_count += 1
+                                    v_list = [r[2] for r in current_pitch_buffer]
+                                    p_idx = np.argmax(v_list)
+                                    peak_marker.append((int(current_x_coords[p_idx]), int(current_y_coords[p_idx]), round(v_list[p_idx]*MS_TO_MPH, 1)))
+                                    is_pitching, low_speed_timer = False, 0
+
+                            prev_vel = cur_v
+                        prev_pos = smoothed_pos.copy()
+
+                else:
+                    # Wrist not visible — advance timers using last known velocity, touch nothing else
                     if is_pitching:
-                        accel_m = abs(cur_v - prev_vel) / dt
-                        current_pitch_buffer.append([pitch_count+1, timestamp_ms, cur_v, accel_m, accel_m/GRAVITY])
-                        current_x_coords.append(smoothed_pos[0]); current_y_coords.append(smoothed_pos[1])
-                        trail_history.append((int(smoothed_pos[0]), int(smoothed_pos[1]), cur_v))
-                        
-                        if cur_v < v_stop_thresh: low_speed_timer += 1
-                        else: low_speed_timer = 0
-                        
+                        if prev_vel < v_stop_thresh:
+                            low_speed_timer += 1
+                        else:
+                            low_speed_timer = 0
                         if low_speed_timer > stop_buffer:
                             pitch_count += 1
                             v_list = [r[2] for r in current_pitch_buffer]
                             p_idx = np.argmax(v_list)
                             peak_marker.append((int(current_x_coords[p_idx]), int(current_y_coords[p_idx]), round(v_list[p_idx]*MS_TO_MPH, 1)))
                             is_pitching, low_speed_timer = False, 0
-                    prev_vel = cur_v
-                prev_pos = smoothed_pos.copy()
 
                 # --- Visualizations ---
                 draw_protractor(frame, lm[L_KNEE], lm[L_HIP], lm[L_ANKLE], l_knee_ang, (0, 255, 255))
