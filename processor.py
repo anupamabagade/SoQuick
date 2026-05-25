@@ -6,7 +6,8 @@ from mediapipe.tasks.python import vision
 
 # --- Settings ---
 MS_TO_MPH = 2.23694
-SMOOTHING_FACTOR = 0.4        # EMA weight on new frame — high enough to detect velocity threshold crossings
+SMOOTHING_FACTOR = 0.4        # EMA weight on new frame for velocity — must stay high enough to cross v_start_thresh
+TRAIL_SMOOTHING_FACTOR = 0.20 # EMA weight for trail drawing — lower = smoother visual arc
 MAX_VELOCITY_HEATMAP = 35
 VISIBILITY_THRESHOLD = 0.5    # Skip wrist frames below this MediaPipe confidence
 MAX_PHYSICAL_VELOCITY = 35.0  # m/s (~78 mph) — discard impossible spikes
@@ -110,6 +111,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
 
         trail_history, peak_marker = [], []
         prev_pos, smoothed_pos, prev_vel = None, None, 0
+        trail_pos = None
         is_pitching, pitch_count, low_speed_timer = False, 0, 0
         current_x_coords, current_y_coords, current_v_list = [], [], []
 
@@ -188,6 +190,10 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                             smoothed_pos = raw_pos
                         smoothed_pos = (SMOOTHING_FACTOR * raw_pos) + ((1 - SMOOTHING_FACTOR) * smoothed_pos)
 
+                        if trail_pos is None:
+                            trail_pos = raw_pos
+                        trail_pos = (TRAIL_SMOOTHING_FACTOR * raw_pos) + ((1 - TRAIL_SMOOTHING_FACTOR) * trail_pos)
+
                         if prev_pos is not None:
                             dt = 1 / fps
                             cur_v = (np.linalg.norm(smoothed_pos - prev_pos) / ppm) / dt
@@ -195,7 +201,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                             if cur_v <= MAX_PHYSICAL_VELOCITY:
                                 if cur_v > v_start_thresh:
                                     is_pitching = True
-                                    new_pt = (int(smoothed_pos[0]), int(smoothed_pos[1]))
+                                    new_pt = (int(trail_pos[0]), int(trail_pos[1]))
                                     add_to_trail = True
                                     if len(trail_history) >= 2:
                                         prev_dir = np.array([trail_history[-1][0] - trail_history[-2][0],
@@ -210,8 +216,8 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                                     if add_to_trail:
                                         trail_history.append(new_pt + (cur_v,))
                                     current_v_list.append(cur_v)
-                                    current_x_coords.append(smoothed_pos[0])
-                                    current_y_coords.append(smoothed_pos[1])
+                                    current_x_coords.append(trail_pos[0])
+                                    current_y_coords.append(trail_pos[1])
 
                                 if is_pitching and cur_v < v_stop_thresh:
                                     low_speed_timer += 1
