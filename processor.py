@@ -1,23 +1,19 @@
 import cv2
 import mediapipe as mp
 import numpy as np
-import csv
-import os
+from ultralytics import YOLO
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-# --- Constants ---
+# --- Settings ---
 MS_TO_MPH = 2.23694
-MAX_VELOCITY_HEATMAP = 35 
-GRAVITY = 9.80665 
-SMOOTHING_FACTOR = 0.35
-FREEZE_DURATION_SEC = 3
-VISIBILITY_THRESHOLD = 0.5
-MAX_PHYSICAL_VELOCITY = 35.0  # m/s (~78 mph)
+SMOOTHING_FACTOR = 0.2        # Lower = Smoother trace (weight on new frame)
+MAX_VELOCITY_HEATMAP = 35
+VISIBILITY_THRESHOLD = 0.5    # Skip wrist frames below this MediaPipe confidence
+MAX_PHYSICAL_VELOCITY = 35.0  # m/s (~78 mph) — discard impossible spikes
 
-# --- Helpers ---
-def get_heatmap_color(velocity_metric, max_val=MAX_VELOCITY_HEATMAP):
-    norm = min(velocity_metric / max_val, 1.0)
+def get_heatmap_color(velocity_metric):
+    norm = min(velocity_metric / MAX_VELOCITY_HEATMAP, 1.0)
     return (int(255*(1-norm)), int(255*(1-abs(norm-0.5)*2)), int(255*norm))
 
 def get_angle_3d(p1, p2, p3):
@@ -25,23 +21,10 @@ def get_angle_3d(p1, p2, p3):
     v2 = np.array([p3.x - p2.x, p3.y - p2.y, p3.z - p2.z])
     unit_v1 = v1 / np.linalg.norm(v1)
     unit_v2 = v2 / np.linalg.norm(v2)
-    angle = np.degrees(np.arccos(np.clip(np.dot(unit_v1, unit_v2), -1.0, 1.0)))
-    if angle > 180:
-        angle = 360 - angle
-    return angle
-
-# def get_angle_2d(a, b, c):
-#     # a, b, c are [x, y] coordinates
-#     ba = np.array(a) - np.array(b)
-#     bc = np.array(c) - np.array(b)
-
-#     cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
-#     angle = np.degrees(np.arccos(np.clip(cosine_angle, -1.0, 1.0)))
-    
-#     # This ensures it stays as the "Interior" angle
-#     return angle
+    return np.degrees(np.arccos(np.clip(np.dot(unit_v1, unit_v2), -1.0, 1.0)))
 
 def get_line_rotation(p1, p2):
+    """Calculates the 2D rotation angle (in degrees) of a line between two points."""
     return np.degrees(np.arctan2(p2.y - p1.y, p2.x - p1.x))
 
 def draw_sleek_label(img, text, pos, color=(255, 255, 255), base_scale=0.8, thickness_mult=1):
@@ -73,38 +56,48 @@ def draw_sleek_label(img, text, pos, color=(255, 255, 255), base_scale=0.8, thic
     return (txt_w, txt_h)
 
 def draw_protractor(img, p_center, p_start, p_end, angle_val, color):
+    """Draws an semi-transparent arc and angle text between three points."""
     h, w = img.shape[:2]
     center = (int(p_center.x * w), int(p_center.y * h))
+    
+    # Calculate vectors and angles for the arc
     v1 = np.array([p_start.x - p_center.x, p_start.y - p_center.y])
     v2 = np.array([p_end.x - p_center.x, p_end.y - p_center.y])
+    
     start_angle = np.degrees(np.arctan2(v1[1], v1[0]))
     end_angle = np.degrees(np.arctan2(v2[1], v2[0]))
+    
     diff = end_angle - start_angle
     if diff > 180: diff -= 360
     elif diff < -180: diff += 360
+    
     f_start, f_end = start_angle, start_angle + diff
+    
+    # Draw the transparent overlay
     overlay = img.copy()
     cv2.ellipse(overlay, center, (40, 40), 0, f_start, f_end, color, -1)
     cv2.addWeighted(overlay, 0.4, img, 0.6, 0, img)
+    
+    # Draw the outline and text
     cv2.ellipse(img, center, (40, 40), 0, f_start, f_end, color, 2, cv2.LINE_AA)
     disp = angle_val if angle_val <= 180 else 360 - angle_val
-    cv2.putText(img, f"{int(disp)}", (center[0]+15, center[1]-15), 1, 1, (255, 255, 255), 1, cv2.LINE_AA)
-
-# --- Engines ---
-
-def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_factor=2):
+    cv2.putText(img, f"{int(disp)}", (center[0]+15, center[1]-15), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+    
+def process_lateral(input_path, output_path, p_height_inches, p_side, display_mode="All", slow_mo_factor=2):
     p_height_m = p_height_inches * 0.0254
     v_start_thresh, v_stop_thresh = 3.5, 5.0
     stop_buffer = 25
     
-    if p_side.upper() == 'RIGHT':
-        WRIST, ELBOW, SHOULDER = 16, 14, 12
-        L_HIP, L_KNEE, L_ANKLE, L_FOOT = 23, 25, 27, 31
-        D_HIP, D_KNEE, D_ANKLE, D_FOOT = 24, 26, 28, 32
-    else:
-        WRIST, ELBOW, SHOULDER = 15, 13, 11
-        D_HIP, D_KNEE, D_ANKLE, D_FOOT = 23, 25, 27, 31
-        L_HIP, L_KNEE, L_ANKLE, L_FOOT = 24, 26, 28, 32
+    # 1. FIXED LANDMARK MAPPING (Absolute Left vs Right)
+    # MediaPipe indices are constant: Left=11,13,15,23,25,27,31 | Right=12,14,16,24,26,28,32
+    L_SH, L_HIP, L_KNEE, L_ANKLE, L_FOOT = 11, 23, 25, 27, 31
+    R_SH, R_HIP, R_KNEE, R_ANKLE, R_FOOT = 12, 24, 26, 28, 32
+    
+    # Arm side mapping for velocity trace
+    WRIST = 16 if p_side.upper() == 'RIGHT' else 15
+    SHOULDER = 12 if p_side.upper() == 'RIGHT' else 11
+    ELBOW = 14 if p_side.upper() == 'RIGHT' else 13
 
     base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task')
     options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
@@ -113,20 +106,12 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
         cap = cv2.VideoCapture(input_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        # Update 11:36 pm 03.06.26
-        # Use avc1 for web compatibility, and adjust output FPS for slow motion
-        # out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps / slow_mo_factor, (w, h))
+        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps / slow_mo_factor, (w, h))
 
-        # 'mp4v' is supposedly the most reliable software-based encoder for Linux servers
-        # fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
-        
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        out = cv2.VideoWriter(output_path, fourcc, int(fps / slow_mo_factor), (int(w), int(h)))
-
-        trail_history, pitch_summaries, peak_marker = [], [], []
+        trail_history, peak_marker = [], []
         prev_pos, smoothed_pos, prev_vel = None, None, 0
-        low_speed_timer, is_pitching, pitch_count = 0, False, 0
-        current_pitch_buffer, current_x_coords, current_y_coords = [], [], []
+        is_pitching, pitch_count, low_speed_timer = False, 0, 0
+        current_x_coords, current_y_coords, current_v_list = [], [], []
 
         frame_count = 0
         while cap.isOpened():
@@ -134,164 +119,159 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, slow_mo_fa
             if not ret: break
             
             timestamp_ms = int((frame_count / fps) * 1000)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
-            result = landmarker.detect_for_video(mp_image, timestamp_ms)
+            result = landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=frame), timestamp_ms)
 
             if result.pose_landmarks:
                 lm = result.pose_landmarks[0]
                 ppm = abs(lm[30].y * h - lm[0].y * h) / p_height_m
 
-                # 1. Angles
-                elbow_ang = get_angle_3d(lm[SHOULDER], lm[ELBOW], lm[WRIST])
-                l_knee_ang = get_angle_3d(lm[L_HIP], lm[L_KNEE], lm[L_ANKLE])
-                l_ankle_ang = get_angle_3d(lm[L_KNEE], lm[L_ANKLE], lm[L_FOOT])
-                d_knee_ang = get_angle_3d(lm[D_HIP], lm[D_KNEE], lm[D_ANKLE])
-                d_ankle_ang = get_angle_3d(lm[D_KNEE], lm[D_ANKLE], lm[D_FOOT])
-                
-                # Extract the coordinates for the Hip Angle (Torso to Quad)
-                # Vertex (B) = Hip
-                # Point A = Shoulder
-                # Point C = Knee
-
-                # node_shoulder = [lm[SHOULDER].x * w, lm[SHOULDER].y * h]
-                # node_hip = [lm[D_HIP].x * w, lm[D_HIP].y * h]
-                # node_knee = [lm[D_KNEE].x * w, lm[D_KNEE].y * h]
-                # Determine which hip is 'Forward' (closer to the catcher)
-                if lm[D_KNEE].x > lm[L_KNEE].x:
-                    target_hip = D_HIP
-                    target_knee = D_KNEE
-                else:
-                    target_hip = L_HIP
-                    target_knee = L_KNEE
-
-                # Pass these 'stabilized' points into get_angle_2d
-                             
-                hip_ang = get_angle_3d(lm[SHOULDER], lm[target_hip], lm[target_knee]) # Needs to be the angle between hip and the leg in front. Leg in front changes
-                
-                # hip_ang = get_angle_2d(node_shoulder, node_hip, node_knee)
-                # hip_ang_2 = get_angle_3d(lm[SHOULDER], lm[L_HIP], lm[L_KNEE])
-                # s_ang = abs(get_line_rotation(lm[15], lm[16]))
-                # h_ang = abs(get_line_rotation(lm[L_HIP], lm[D_HIP]))
-                # separation = abs(s_ang - h_ang)
-
-                # 2. Velocity Tracking
-                wrist_visible = lm[WRIST].visibility >= VISIBILITY_THRESHOLD
-
-                if wrist_visible:
-                    raw_pos = np.array([lm[WRIST].x * w, lm[WRIST].y * h])
-                    if smoothed_pos is None:
-                        smoothed_pos = raw_pos
+                # --- 1. DUAL LEG CALCULATIONS (No jumping) ---
+                if display_mode in ["All", "Leg Angles Only"]:
+                    # 1. Determine which hip is closer (Lower Z = Closer)
+                    if lm[L_HIP].z < lm[R_HIP].z:
+                        # Left Hip is facing camera
+                        hip_label = "L-HIP"
+                        hip_color = (0, 165, 255) # Orange
+                        hip_raw = get_angle_3d(lm[L_SH], lm[L_HIP], lm[L_KNEE])
+                        active_hip_ang = hip_raw if hip_raw <= 180 else 360 - hip_raw
+                        # Draw Left Hip Protractor
+                        draw_protractor(frame, lm[L_HIP], lm[L_SH], lm[L_KNEE], active_hip_ang, hip_color)
                     else:
+                        # Right Hip is facing camera
+                        hip_label = "R-HIP"
+                        hip_color = (255, 0, 255) # Magenta
+                        hip_raw = get_angle_3d(lm[R_SH], lm[R_HIP], lm[R_KNEE])
+                        active_hip_ang = hip_raw if hip_raw <= 180 else 360 - hip_raw
+                        # Draw Right Hip Protractor
+                        draw_protractor(frame, lm[R_HIP], lm[R_SH], lm[R_KNEE], active_hip_ang, hip_color)
+                    
+                    # LEFT LEG Calculations
+                    l_knee_r = get_angle_3d(lm[L_HIP], lm[L_KNEE], lm[L_ANKLE])
+                    l_ank_r = get_angle_3d(lm[L_KNEE], lm[L_ANKLE], lm[L_FOOT])
+                    left_knee = l_knee_r if l_knee_r <= 180 else 360 - l_knee_r
+                    left_ankle = l_ank_r if l_ank_r <= 180 else 360 - l_ank_r
+
+                    # RIGHT LEG Calculations
+                    r_knee_r = get_angle_3d(lm[R_HIP], lm[R_KNEE], lm[R_ANKLE])
+                    r_ank_r = get_angle_3d(lm[R_KNEE], lm[R_ANKLE], lm[R_FOOT])
+                    right_knee = r_knee_r if r_knee_r <= 180 else 360 - r_knee_r
+                    right_ankle = r_ank_r if r_ank_r <= 180 else 360 - r_ank_r
+
+                    # --- DRAW LEFT LEG (Yellow/Cyan) ---
+                    draw_protractor(frame, lm[L_KNEE], lm[L_HIP], lm[L_ANKLE], left_knee, (0, 255, 255))
+                    draw_protractor(frame, lm[L_ANKLE], lm[L_KNEE], lm[L_FOOT], left_ankle, (255, 255, 0))
+                    cv2.line(frame, (int(lm[L_HIP].x*w), int(lm[L_HIP].y*h)), (int(lm[L_KNEE].x*w), int(lm[L_KNEE].y*h)), (0, 255, 255), 2)
+                    cv2.line(frame, (int(lm[L_KNEE].x*w), int(lm[L_KNEE].y*h)), (int(lm[L_ANKLE].x*w), int(lm[L_ANKLE].y*h)), (0, 255, 255), 2)
+
+                    # --- DRAW RIGHT LEG (Green/Magenta) ---
+                    draw_protractor(frame, lm[R_KNEE], lm[R_HIP], lm[R_ANKLE], right_knee, (0, 255, 0))
+                    draw_protractor(frame, lm[R_ANKLE], lm[R_KNEE], lm[R_FOOT], right_ankle, ((180, 105, 255)))
+                    cv2.line(frame, (int(lm[R_HIP].x*w), int(lm[R_HIP].y*h)), (int(lm[R_KNEE].x*w), int(lm[R_KNEE].y*h)), (0, 255, 0), 2)
+                    cv2.line(frame, (int(lm[R_KNEE].x*w), int(lm[R_KNEE].y*h)), (int(lm[R_ANKLE].x*w), int(lm[R_ANKLE].y*h)), (0, 255, 0), 2)
+
+                # --- 2. ARM ANGLES ---
+                if display_mode in ["All", "Arm Angles Only"]:
+                    elbow_raw = get_angle_3d(lm[SHOULDER], lm[ELBOW], lm[WRIST])
+                    elbow_ang = elbow_raw if elbow_raw <= 180 else 360 - elbow_raw
+                    draw_protractor(frame, lm[ELBOW], lm[SHOULDER], lm[WRIST], elbow_ang, (255, 255, 0))
+                    cv2.line(frame, (int(lm[SHOULDER].x*w), int(lm[SHOULDER].y*h)), (int(lm[ELBOW].x*w), int(lm[ELBOW].y*h)), (255, 255, 0), 2)
+                    cv2.line(frame, (int(lm[ELBOW].x*w), int(lm[ELBOW].y*h)), (int(lm[WRIST].x*w), int(lm[WRIST].y*h)), (255, 255, 0), 2)
+
+                # --- 3. WRIST TRACE & VELOCITY ---
+                if display_mode in ["All", "Wrist Trace & Velocity Only"]:
+                    wrist_visible = lm[WRIST].visibility >= VISIBILITY_THRESHOLD
+
+                    if wrist_visible:
+                        raw_pos = np.array([lm[WRIST].x * w, lm[WRIST].y * h])
+                        if smoothed_pos is None:
+                            smoothed_pos = raw_pos
                         smoothed_pos = (SMOOTHING_FACTOR * raw_pos) + ((1 - SMOOTHING_FACTOR) * smoothed_pos)
 
-                    if prev_pos is not None:
-                        dt = 1 / fps
-                        cur_v = (np.linalg.norm(smoothed_pos - prev_pos) / ppm) / dt
+                        if prev_pos is not None:
+                            dt = 1 / fps
+                            cur_v = (np.linalg.norm(smoothed_pos - prev_pos) / ppm) / dt
 
-                        # Layer 3: discard physically impossible spikes
-                        if cur_v > MAX_PHYSICAL_VELOCITY:
-                            if is_pitching:
-                                if prev_vel < v_stop_thresh:
+                            if cur_v <= MAX_PHYSICAL_VELOCITY:
+                                if cur_v > v_start_thresh:
+                                    is_pitching = True
+                                    trail_history.append((int(smoothed_pos[0]), int(smoothed_pos[1]), cur_v))
+                                    current_v_list.append(cur_v)
+                                    current_x_coords.append(smoothed_pos[0])
+                                    current_y_coords.append(smoothed_pos[1])
+
+                                if is_pitching and cur_v < v_stop_thresh:
                                     low_speed_timer += 1
-                                else:
-                                    low_speed_timer = 0
-                                if low_speed_timer > stop_buffer:
-                                    pitch_count += 1
-                                    v_list = [r[2] for r in current_pitch_buffer]
-                                    p_idx = np.argmax(v_list)
-                                    peak_marker.append((int(current_x_coords[p_idx]), int(current_y_coords[p_idx]), round(v_list[p_idx]*MS_TO_MPH, 1)))
-                                    is_pitching, low_speed_timer = False, 0
-                        else:
-                            if cur_v > v_start_thresh and not is_pitching:
-                                is_pitching = True
-                                current_pitch_buffer, current_x_coords, current_y_coords = [], [], []
+                                    if low_speed_timer > stop_buffer:
+                                        pitch_count += 1
+                                        p_idx = np.argmax(current_v_list)
+                                        peak_marker.append((int(current_x_coords[p_idx]), int(current_y_coords[p_idx]), round(current_v_list[p_idx] * MS_TO_MPH, 1)))
+                                        is_pitching, low_speed_timer = False, 0
+                                        current_v_list, current_x_coords, current_y_coords = [], [], []
 
-                            if is_pitching:
-                                accel_m = abs(cur_v - prev_vel) / dt
-                                current_pitch_buffer.append([pitch_count+1, timestamp_ms, cur_v, accel_m, accel_m/GRAVITY])
-                                current_x_coords.append(smoothed_pos[0])
-                                current_y_coords.append(smoothed_pos[1])
-                                trail_history.append((int(smoothed_pos[0]), int(smoothed_pos[1]), cur_v))
+                                prev_vel = cur_v
+                            prev_pos = smoothed_pos.copy()
 
-                                if cur_v < v_stop_thresh:
-                                    low_speed_timer += 1
-                                else:
-                                    low_speed_timer = 0
+                    # --- DRAWING THE TRACE & PEAK MARKERS ---
+                    # 1. Draw the Heatmap Trail
+                    for i in range(1, len(trail_history)):
+                        cv2.line(frame, trail_history[i-1][:2], trail_history[i][:2], 
+                                 get_heatmap_color(trail_history[i][2]), 10, cv2.LINE_AA)
+                    
+                    # 2. Draw the Peak Markers (Circle + Text)
+                    for px, py, mph in peak_marker:
+                        # Draw a bright outer ring and a white center dot
+                        cv2.circle(frame, (px, py), 12, (0, 255, 255), 3, cv2.LINE_AA) # Yellow ring
+                        cv2.circle(frame, (px, py), 4, (255, 255, 255), -1, cv2.LINE_AA) # White center
+                        
+                        # Add the MPH text right above the point
+                        cv2.putText(frame, f"{mph} MPH", (px - 40, py - 20), 
+                                    cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
 
-                                if low_speed_timer > stop_buffer:
-                                    pitch_count += 1
-                                    v_list = [r[2] for r in current_pitch_buffer]
-                                    p_idx = np.argmax(v_list)
-                                    peak_marker.append((int(current_x_coords[p_idx]), int(current_y_coords[p_idx]), round(v_list[p_idx]*MS_TO_MPH, 1)))
-                                    is_pitching, low_speed_timer = False, 0
+            # --- CLEANED DASHBOARD (Top Left) ---
+            # Box size adjusted for better spacing
+            cv2.rectangle(frame, (10, 20), (380, 450), (0, 0, 0), -1) 
+            cv2.rectangle(frame, (10, 20), (380, 450), (100, 100, 100), 2) 
 
-                            prev_vel = cur_v
-                        prev_pos = smoothed_pos.copy()
+            # Header
+            cv2.putText(frame, "DASHBOARD", (30, 65), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
+            cv2.line(frame, (30, 80), (350, 80), (150, 150, 150), 1)
 
-                else:
-                    # Wrist not visible — advance timers using last known velocity, touch nothing else
-                    if is_pitching:
-                        if prev_vel < v_stop_thresh:
-                            low_speed_timer += 1
-                        else:
-                            low_speed_timer = 0
-                        if low_speed_timer > stop_buffer:
-                            pitch_count += 1
-                            v_list = [r[2] for r in current_pitch_buffer]
-                            p_idx = np.argmax(v_list)
-                            peak_marker.append((int(current_x_coords[p_idx]), int(current_y_coords[p_idx]), round(v_list[p_idx]*MS_TO_MPH, 1)))
-                            is_pitching, low_speed_timer = False, 0
+            # --- Row 1: Camera Facing Hip ---
+            if 'active_hip_ang' in locals():
+                cv2.putText(frame, f"{hip_label}: {int(active_hip_ang)} deg", (30, 125), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2) # MAGENTA
 
-                # --- Visualizations ---
-                draw_protractor(frame, lm[L_KNEE], lm[L_HIP], lm[L_ANKLE], l_knee_ang, (0, 255, 255))
-                draw_protractor(frame, lm[L_ANKLE], lm[L_KNEE], lm[L_FOOT], l_ankle_ang, (0, 165, 255))
-                draw_protractor(frame, lm[D_KNEE], lm[D_HIP], lm[D_ANKLE], d_knee_ang, (0, 255, 0))
-                draw_protractor(frame, lm[D_ANKLE], lm[D_KNEE], lm[D_FOOT], d_ankle_ang, (255, 0, 255))
-                draw_protractor(frame, lm[ELBOW], lm[SHOULDER], lm[WRIST], elbow_ang, (255, 255, 0))
-                draw_protractor(frame, lm[target_hip], lm[SHOULDER], lm[target_knee], hip_ang, (0, 128, 255))
-                #draw_protractor(frame, lm[L_HIP], lm[SHOULDER], lm[L_KNEE], hip_ang_2, (0, 128, 255))
+            # --- Row 2: Left Leg Data ---
+            if 'left_knee' in locals():
+                cv2.putText(frame, f"L-KNEE: {int(left_knee)} deg", (30, 170), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2) # CYAN
+                cv2.putText(frame, f"L-ANKLE: {int(left_ankle)} deg", (30, 215), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2) # YELLOW
 
-                # Skeleton Lines
-                def l_line(p1, p2, col): cv2.line(frame, (int(lm[p1].x*w), int(lm[p1].y*h)), (int(lm[p2].x*w), int(lm[p2].y*h)), col, 2)
-                l_line(SHOULDER, ELBOW, (255, 255, 0)); l_line(ELBOW, WRIST, (255, 255, 0))
-                l_line(L_HIP, L_KNEE, (0, 255, 255)); l_line(L_KNEE, L_ANKLE, (0, 255, 255)); l_line(L_ANKLE, L_FOOT, (0, 165, 255))
-                l_line(D_HIP, D_KNEE, (0, 255, 0)); l_line(D_KNEE, D_ANKLE, (0, 255, 0)); l_line(D_ANKLE, D_FOOT, (255, 0, 255))
-                l_line(SHOULDER, target_hip, (0, 128, 255)); l_line(target_hip, target_knee, (0, 128, 255))
-                #l_line(SHOULDER, L_HIP, (0, 128, 255)); l_line(L_HIP, L_KNEE, (0, 128, 255))
-                
-            # --- Overlays (HUD, Ticker, Trails) ---
-            for i in range(1, len(trail_history)):
-                cv2.line(frame, trail_history[i-1][:2], trail_history[i][:2], get_heatmap_color(trail_history[i][2]), 10, cv2.LINE_AA)
-            
-            for px, py, mph in peak_marker:
-                cv2.circle(frame, (px, py), 20, (0, 0, 255), 2)
-                cv2.drawMarker(frame, (px, py), (0, 255, 255), cv2.MARKER_CROSS, 30, 2)
-                cv2.putText(frame, f"{mph} mph", (px + 22, py + 5), 2, 0.7, (0, 255, 255), 1, cv2.LINE_AA)
+            # --- Row 3: Right Leg Data ---
+            if 'right_knee' in locals():
+                cv2.putText(frame, f"R-KNEE: {int(right_knee)} deg", (30, 260), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)   # GREEN
+                cv2.putText(frame, f"R-ANKLE: {int(right_ankle)} deg", (30, 305), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 105, 255), 2) # PURPLE/VIOLET
 
-            # Dashboard & Legend
-            cv2.rectangle(frame, (20, 20), (450, 140), (0, 0, 0), -1)
-            cv2.putText(frame, f"PITCH: {pitch_count}", (40, 75), 2, 1.5, (0, 255, 255), 2)
-            cv2.putText(frame, f"LIVE: {prev_vel * MS_TO_MPH:.1f} mph", (40, 120), 2, 0.7, (255, 255, 255), 1)
-            cv2.putText(frame, "LEAD LEG", (300, 100), 1, 0.8, (0, 255, 255), 1)
-            cv2.putText(frame, "DRIVE LEG", (300, 125), 1, 0.8, (0, 255, 0), 1)
-
-            #draw_sleek_label(frame, f"SEPARATION: {separation:.1f} DEG", (50, h - 50), (0, 255, 0), 0.8)    
-            
-            # Timer Ticker
-            t_sec = frame_count / fps
-            timer_txt = f"{int(t_sec//60):02}:{int(t_sec%60):02}.{int((t_sec%1)*100):02}"
-            tw = cv2.getTextSize(timer_txt, cv2.FONT_HERSHEY_DUPLEX, 0.8, 2)[0][0]
-            cv2.rectangle(frame, (w - tw - 50, 20), (w - 20, 70), (0, 0, 0), -1)
-            cv2.putText(frame, timer_txt, (w - tw - 40, 55), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 1, cv2.LINE_AA)
+            # --- Row 4: Pitch Data ---
+            if display_mode in ["All", "Wrist Trace & Velocity Only"]:
+                cv2.putText(frame, f"SPEED: {prev_vel * 2.23694:.1f} MPH", (30, 370), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                cv2.putText(frame, f"COUNT: {pitch_count}", (30, 415), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
             out.write(frame)
             frame_count += 1
+
         cap.release()
         out.release()
 
+# Note: Keep your existing process_back function here, but update its codec to 'mp4v'ions(model_asset_path='pose_landmarker_heavy.task')
 def process_back(input_path, output_path, slow_mo_factor=2):
-
     """Back View Engine: Hip-Shoulder Separation (X-Factor)."""
+    # Define missing landmark indices
     L_SH, R_SH = 11, 12
     L_HIP, R_HIP = 23, 24
 
@@ -304,11 +284,8 @@ def process_back(input_path, output_path, slow_mo_factor=2):
         w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        # slow_mo_factor adjusts output FPS for browser playback
-        #out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps / slow_mo_factor, (w, h))
-
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        out = cv2.VideoWriter(output_path, fourcc, int(fps / slow_mo_factor), (int(w), int(h)))
+        # Using mp4v for compatibility (app.py handles the ffmpeg conversion to fix black screen)
+        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps / slow_mo_factor, (w, h))
 
         max_separation = 0
         max_x_time = "00:00.00"
@@ -330,7 +307,7 @@ def process_back(input_path, output_path, slow_mo_factor=2):
             if result.pose_landmarks:
                 lm = result.pose_landmarks[0]
                 
-                # Calculate angles
+                # Calculate rotation of shoulder line and hip line
                 s_ang = abs(get_line_rotation(lm[L_SH], lm[R_SH]))
                 h_ang = abs(get_line_rotation(lm[L_HIP], lm[R_HIP]))
                 separation = abs(s_ang - h_ang)
@@ -363,9 +340,8 @@ def process_back(input_path, output_path, slow_mo_factor=2):
 
         # Freeze Frame Logic
         if final_frame is not None:
-            for _ in range(int((fps / slow_mo_factor) * FREEZE_DURATION_SEC)):
+            for _ in range(int((fps / slow_mo_factor) * 3)): # Freeze for 3 seconds
                 out.write(final_frame)
 
         cap.release()
-        out.release()
-
+        out.release()    
