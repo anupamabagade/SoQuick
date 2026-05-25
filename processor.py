@@ -11,7 +11,6 @@ TRAIL_SMOOTHING_FACTOR = 0.20 # EMA weight for trail drawing — lower = smoothe
 MAX_VELOCITY_HEATMAP = 35
 VISIBILITY_THRESHOLD = 0.5    # Skip wrist frames below this MediaPipe confidence
 MAX_PHYSICAL_VELOCITY = 35.0  # m/s (~78 mph) — discard impossible spikes
-MAX_DIRECTION_CHANGE = 90.0   # degrees — skip trail points that reverse direction sharply
 
 def get_heatmap_color(velocity_metric):
     norm = min(velocity_metric / MAX_VELOCITY_HEATMAP, 1.0)
@@ -202,19 +201,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                                 if cur_v > v_start_thresh:
                                     is_pitching = True
                                     new_pt = (int(trail_pos[0]), int(trail_pos[1]))
-                                    add_to_trail = True
-                                    if len(trail_history) >= 2:
-                                        prev_dir = np.array([trail_history[-1][0] - trail_history[-2][0],
-                                                             trail_history[-1][1] - trail_history[-2][1]], dtype=float)
-                                        new_dir = np.array([new_pt[0] - trail_history[-1][0],
-                                                            new_pt[1] - trail_history[-1][1]], dtype=float)
-                                        pn, nn = np.linalg.norm(prev_dir), np.linalg.norm(new_dir)
-                                        if pn > 0 and nn > 0:
-                                            angle = np.degrees(np.arccos(np.clip(np.dot(prev_dir, new_dir) / (pn * nn), -1.0, 1.0)))
-                                            if angle > MAX_DIRECTION_CHANGE:
-                                                add_to_trail = False
-                                    if add_to_trail:
-                                        trail_history.append(new_pt + (cur_v,))
+                                    trail_history.append(new_pt + (cur_v,))
                                     current_v_list.append(cur_v)
                                     current_x_coords.append(trail_pos[0])
                                     current_y_coords.append(trail_pos[1])
