@@ -6,7 +6,7 @@ from mediapipe.tasks.python import vision
 
 # --- Settings ---
 MS_TO_MPH = 2.23694
-SMOOTHING_FACTOR = 0.2        # Lower = Smoother trace (weight on new frame)
+SMOOTHING_FACTOR = 0.4        # Weight on new frame — must be high enough that pitch velocity exceeds v_start_thresh
 MAX_VELOCITY_HEATMAP = 35
 VISIBILITY_THRESHOLD = 0.5    # Skip wrist frames below this MediaPipe confidence
 MAX_PHYSICAL_VELOCITY = 35.0  # m/s (~78 mph) — discard impossible spikes
