@@ -6,10 +6,11 @@ from mediapipe.tasks.python import vision
 
 # --- Settings ---
 MS_TO_MPH = 2.23694
-SMOOTHING_FACTOR = 0.4        # Weight on new frame — must be high enough that pitch velocity exceeds v_start_thresh
+SMOOTHING_FACTOR = 0.4        # EMA weight on new frame — high enough to detect velocity threshold crossings
 MAX_VELOCITY_HEATMAP = 35
 VISIBILITY_THRESHOLD = 0.5    # Skip wrist frames below this MediaPipe confidence
 MAX_PHYSICAL_VELOCITY = 35.0  # m/s (~78 mph) — discard impossible spikes
+MAX_DIRECTION_CHANGE = 90.0   # degrees — skip trail points that reverse direction sharply
 
 def get_heatmap_color(velocity_metric):
     norm = min(velocity_metric / MAX_VELOCITY_HEATMAP, 1.0)
@@ -182,6 +183,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
 
                     if wrist_visible:
                         raw_pos = np.array([lm[WRIST].x * w, lm[WRIST].y * h])
+
                         if smoothed_pos is None:
                             smoothed_pos = raw_pos
                         smoothed_pos = (SMOOTHING_FACTOR * raw_pos) + ((1 - SMOOTHING_FACTOR) * smoothed_pos)
@@ -193,7 +195,20 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                             if cur_v <= MAX_PHYSICAL_VELOCITY:
                                 if cur_v > v_start_thresh:
                                     is_pitching = True
-                                    trail_history.append((int(smoothed_pos[0]), int(smoothed_pos[1]), cur_v))
+                                    new_pt = (int(smoothed_pos[0]), int(smoothed_pos[1]))
+                                    add_to_trail = True
+                                    if len(trail_history) >= 2:
+                                        prev_dir = np.array([trail_history[-1][0] - trail_history[-2][0],
+                                                             trail_history[-1][1] - trail_history[-2][1]], dtype=float)
+                                        new_dir = np.array([new_pt[0] - trail_history[-1][0],
+                                                            new_pt[1] - trail_history[-1][1]], dtype=float)
+                                        pn, nn = np.linalg.norm(prev_dir), np.linalg.norm(new_dir)
+                                        if pn > 0 and nn > 0:
+                                            angle = np.degrees(np.arccos(np.clip(np.dot(prev_dir, new_dir) / (pn * nn), -1.0, 1.0)))
+                                            if angle > MAX_DIRECTION_CHANGE:
+                                                add_to_trail = False
+                                    if add_to_trail:
+                                        trail_history.append(new_pt + (cur_v,))
                                     current_v_list.append(cur_v)
                                     current_x_coords.append(smoothed_pos[0])
                                     current_y_coords.append(smoothed_pos[1])
@@ -208,7 +223,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                                         current_v_list, current_x_coords, current_y_coords = [], [], []
 
                                 prev_vel = cur_v
-                            prev_pos = smoothed_pos.copy()
+                        prev_pos = smoothed_pos.copy()
 
                     # --- DRAWING THE TRACE & PEAK MARKERS ---
                     # 1. Draw the Heatmap Trail
@@ -267,7 +282,6 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
         cap.release()
         out.release()
 
-# Note: Keep your existing process_back function here, but update its codec to 'mp4v'ions(model_asset_path='pose_landmarker_heavy.task')
 def process_back(input_path, output_path, slow_mo_factor=2):
     """Back View Engine: Hip-Shoulder Separation (X-Factor)."""
     # Define missing landmark indices
