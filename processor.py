@@ -7,10 +7,8 @@ from ultralytics import YOLO
 
 # --- Settings ---
 MS_TO_MPH = 2.23694
-SMOOTHING_FACTOR = 0.4        # EMA weight on new frame for velocity — must stay high enough to cross v_start_thresh
-TRAIL_SMOOTHING_FACTOR = 0.20 # EMA weight for trail drawing — lower = smoother visual arc
 MAX_VELOCITY_HEATMAP = 35
-VISIBILITY_THRESHOLD = 0.5    # Skip wrist frames below this MediaPipe confidence
+VISIBILITY_THRESHOLD = 0.5    # Skip wrist frames below this YOLO confidence
 MAX_PHYSICAL_VELOCITY = 35.0  # m/s (~78 mph) — discard impossible spikes
 
 def get_heatmap_color(velocity_metric):
@@ -116,8 +114,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
         out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps / slow_mo_factor, (w, h))
 
         trail_history, peak_marker = [], []
-        prev_pos, smoothed_pos, prev_vel = None, None, 0
-        trail_pos = None
+        prev_pos, prev_vel = None, 0
         is_pitching, pitch_count, low_speed_timer = False, 0, 0
         current_x_coords, current_y_coords, current_v_list = [], [], []
 
@@ -207,28 +204,19 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                                      and yolo_wrist_px > 0)
 
                     if wrist_visible:
-                        raw_pos = np.array([yolo_wrist_px, yolo_wrist_py])  # already in pixels
-
-                        if smoothed_pos is None:
-                            smoothed_pos = raw_pos
-                        smoothed_pos = (SMOOTHING_FACTOR * raw_pos) + ((1 - SMOOTHING_FACTOR) * smoothed_pos)
-
-                        if trail_pos is None:
-                            trail_pos = raw_pos
-                        trail_pos = (TRAIL_SMOOTHING_FACTOR * raw_pos) + ((1 - TRAIL_SMOOTHING_FACTOR) * trail_pos)
+                        raw_pos = np.array([yolo_wrist_px, yolo_wrist_py])
 
                         if prev_pos is not None:
                             dt = 1 / fps
-                            cur_v = (np.linalg.norm(smoothed_pos - prev_pos) / ppm) / dt
+                            cur_v = (np.linalg.norm(raw_pos - prev_pos) / ppm) / dt
 
                             if cur_v <= MAX_PHYSICAL_VELOCITY:
                                 if cur_v > v_start_thresh:
                                     is_pitching = True
-                                    new_pt = (int(trail_pos[0]), int(trail_pos[1]))
-                                    trail_history.append(new_pt + (cur_v,))
+                                    trail_history.append((int(raw_pos[0]), int(raw_pos[1]), cur_v))
                                     current_v_list.append(cur_v)
-                                    current_x_coords.append(trail_pos[0])
-                                    current_y_coords.append(trail_pos[1])
+                                    current_x_coords.append(raw_pos[0])
+                                    current_y_coords.append(raw_pos[1])
 
                                 if is_pitching and cur_v < v_stop_thresh:
                                     low_speed_timer += 1
@@ -240,7 +228,8 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                                         current_v_list, current_x_coords, current_y_coords = [], [], []
 
                                 prev_vel = cur_v
-                        prev_pos = smoothed_pos.copy()
+
+                        prev_pos = raw_pos.copy()
 
                     # --- DRAW YOLO WRIST DETECTION MARKER ---
                     if wrist_visible:
