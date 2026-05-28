@@ -10,6 +10,7 @@ MS_TO_MPH = 2.23694
 MAX_VELOCITY_HEATMAP = 35
 VISIBILITY_THRESHOLD = 0.5    # Skip wrist frames below this YOLO confidence
 MAX_PHYSICAL_VELOCITY = 35.0  # m/s (~78 mph) — discard impossible spikes
+MAX_JUMP_PX = 250             # reject frame if wrist jumps more than this many pixels (misidentification guard)
 
 def get_heatmap_color(velocity_metric):
     norm = min(velocity_metric / MAX_VELOCITY_HEATMAP, 1.0)
@@ -207,29 +208,37 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                         raw_pos = np.array([yolo_wrist_px, yolo_wrist_py])
 
                         if prev_pos is not None:
-                            dt = 1 / fps
-                            cur_v = (np.linalg.norm(raw_pos - prev_pos) / ppm) / dt
+                            jump_px = np.linalg.norm(raw_pos - prev_pos)
 
-                            if cur_v <= MAX_PHYSICAL_VELOCITY:
-                                if cur_v > v_start_thresh:
-                                    is_pitching = True
-                                    trail_history.append((int(raw_pos[0]), int(raw_pos[1]), cur_v))
-                                    current_v_list.append(cur_v)
-                                    current_x_coords.append(raw_pos[0])
-                                    current_y_coords.append(raw_pos[1])
+                            if jump_px > MAX_JUMP_PX:
+                                # Likely misidentification — keep prev_pos anchored to last good position
+                                pass
+                            else:
+                                dt = 1 / fps
+                                cur_v = (jump_px / ppm) / dt
 
-                                if is_pitching and cur_v < v_stop_thresh:
-                                    low_speed_timer += 1
-                                    if low_speed_timer > stop_buffer:
-                                        pitch_count += 1
-                                        p_idx = np.argmax(current_v_list)
-                                        peak_marker.append((int(current_x_coords[p_idx]), int(current_y_coords[p_idx]), round(current_v_list[p_idx] * MS_TO_MPH, 1)))
-                                        is_pitching, low_speed_timer = False, 0
-                                        current_v_list, current_x_coords, current_y_coords = [], [], []
+                                if cur_v <= MAX_PHYSICAL_VELOCITY:
+                                    if cur_v > v_start_thresh:
+                                        is_pitching = True
+                                        trail_history.append((int(raw_pos[0]), int(raw_pos[1]), cur_v))
+                                        current_v_list.append(cur_v)
+                                        current_x_coords.append(raw_pos[0])
+                                        current_y_coords.append(raw_pos[1])
 
-                                prev_vel = cur_v
+                                    if is_pitching and cur_v < v_stop_thresh:
+                                        low_speed_timer += 1
+                                        if low_speed_timer > stop_buffer:
+                                            pitch_count += 1
+                                            p_idx = np.argmax(current_v_list)
+                                            peak_marker.append((int(current_x_coords[p_idx]), int(current_y_coords[p_idx]), round(current_v_list[p_idx] * MS_TO_MPH, 1)))
+                                            is_pitching, low_speed_timer = False, 0
+                                            current_v_list, current_x_coords, current_y_coords = [], [], []
 
-                        prev_pos = raw_pos.copy()
+                                    prev_vel = cur_v
+
+                                prev_pos = raw_pos.copy()  # only update on accepted frames
+                        else:
+                            prev_pos = raw_pos.copy()
 
                     # --- DRAW YOLO WRIST DETECTION MARKER ---
                     if wrist_visible:
