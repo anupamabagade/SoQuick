@@ -53,9 +53,10 @@ if uploaded_file:
         try:
             # 2. TRIGGER THE CORRECT LOGIC
             # This calls the specific functions in your processor.py
+            freeze_frames = []
             if view_type == "Lateral (Trace)":
                 status.update(label="Calculating Velocity & Leg Drive...")
-                processor.process_lateral(input_path, raw_output, p_height, p_side, display_mode=display_mode, slow_mo_factor=slow_mo)
+                freeze_frames = processor.process_lateral(input_path, raw_output, p_height, p_side, display_mode=display_mode, slow_mo_factor=slow_mo) or []
             else:
                 status.update(label="Analyzing pitch...")
                 processor.process_back(input_path, raw_output, slow_mo_factor=slow_mo)
@@ -77,10 +78,10 @@ if uploaded_file:
 
             # 5. DISPLAY RESULTS
             status.update(label="Analysis Complete!", state="complete", expanded=False)
-            
+
             st.subheader(f"Final {view_type} Analysis")
             st.video(web_ready)
-            
+
             # Allow download of the analyzed file
             with open(web_ready, "rb") as file:
                 st.download_button(
@@ -89,6 +90,21 @@ if uploaded_file:
                     file_name=f"SoQuick_{view_type.split()[0]}_Analysis.mp4",
                     mime="video/mp4"
                 )
+
+            # 6. FREEZE FRAMES (lateral mode only)
+            if freeze_frames:
+                st.markdown("---")
+                st.subheader("Key Moments")
+                for ff in freeze_frames:
+                    st.markdown(f"**{ff['label']}**")
+                    st.image(ff['path'], use_container_width=True)
+                    if ff.get('stride'):
+                        s = ff['stride']
+                        st.caption(
+                            f"Stride (feet apart, 2D): **{s['full_ft']} ft** &nbsp;|&nbsp; "
+                            f"Horizontal distance: **{s['horiz_ft']} ft**"
+                        )
+                    st.markdown("")   # spacer
 
         except Exception as e:
             st.error(f"UI Error: {e}")

@@ -102,6 +102,11 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
     # COCO keypoint indices used by YOLOv8-pose (person's left/right, not camera's)
     YOLO_WRIST = 10 if p_side.upper() == 'RIGHT' else 9
 
+    # Freeze frame: reach/stride foot = left for RH pitcher, right for LH pitcher
+    REACH_FOOT_IDX  = L_FOOT  if p_side.upper() == 'RIGHT' else R_FOOT    # 31 or 32
+    REACH_ANKLE_IDX = L_ANKLE if p_side.upper() == 'RIGHT' else R_ANKLE   # 27 or 28
+    DRIVE_ANKLE_IDX = R_ANKLE if p_side.upper() == 'RIGHT' else L_ANKLE   # 28 or 27
+
     # Load YOLOv8-pose model for wrist detection (downloads automatically on first run)
     yolo = YOLO('yolov8x-pose.pt')
 
@@ -118,6 +123,14 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
         prev_pos, prev_vel = None, 0
         is_pitching, pitch_count, low_speed_timer = False, 0, 0
         current_x_coords, current_y_coords, current_v_list = [], [], []
+
+        # --- Freeze frame state ---
+        gnd_samples, ground_y = [], None
+        foot_phase = 'calibrating'   # → 'on_ground' → 'in_air' → 'landed'
+        min_reach_y, min_reach_frame = 1.0, None
+        freeze_frames, stride_info = {}, {}
+        prev_was_pitching = False
+        pitch_peak_v, pitch_peak_frame = 0.0, None
 
         frame_count = 0
         while cap.isOpened():
@@ -297,11 +310,91 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                 cv2.putText(frame, f"COUNT: {pitch_count}", (30, 415), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
+            # --- FREEZE FRAME DETECTION (after all drawing) ---
+            if result.pose_landmarks:
+                lm_f = result.pose_landmarks[0]
+                rf_y  = lm_f[REACH_FOOT_IDX].y
+
+                # Phase 1: calibrate ground level from first 20 detected frames
+                if foot_phase == 'calibrating':
+                    gnd_samples.append(rf_y)
+                    if len(gnd_samples) == 20:
+                        ground_y = float(np.median(gnd_samples))
+                        foot_phase = 'on_ground'
+
+                # Phase 2: wait for foot to lift (threshold: 3% of frame height above ground)
+                elif foot_phase == 'on_ground':
+                    if 'foot_lift' not in freeze_frames and rf_y < ground_y - 0.03:
+                        freeze_frames['foot_lift'] = frame.copy()
+                        foot_phase = 'in_air'
+                        min_reach_y  = rf_y
+                        min_reach_frame = frame.copy()
+
+                # Phase 3: track foot in air — record peak, detect landing
+                elif foot_phase == 'in_air':
+                    if rf_y < min_reach_y:
+                        min_reach_y = rf_y
+                        min_reach_frame = frame.copy()
+                    elif rf_y >= ground_y - 0.05:   # foot returned to ground level
+                        if 'foot_peak' not in freeze_frames and min_reach_frame is not None:
+                            freeze_frames['foot_peak'] = min_reach_frame
+                        if 'foot_contact' not in freeze_frames:
+                            fc = frame.copy()
+                            ra = lm_f[REACH_ANKLE_IDX]
+                            da = lm_f[DRIVE_ANKLE_IDX]
+                            rx, ry = int(ra.x * w), int(ra.y * h)
+                            dx, dy = int(da.x * w), int(da.y * h)
+                            horiz_px = abs(ra.x * w - da.x * w)
+                            full_px  = float(np.linalg.norm([ra.x*w - da.x*w, ra.y*h - da.y*h]))
+                            stride_info = {
+                                'horiz_ft': round(horiz_px / ppm * 3.28084, 1),
+                                'full_ft':  round(full_px  / ppm * 3.28084, 1),
+                            }
+                            # Annotate stride measurement on the captured frame
+                            cv2.line(fc, (rx, ry), (dx, dy), (0, 255, 255), 3, cv2.LINE_AA)
+                            cv2.putText(fc, f"FEET APART: {stride_info['full_ft']} ft",
+                                        ((rx+dx)//2 - 140, min(ry, dy) - 20),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2, cv2.LINE_AA)
+                            freeze_frames['foot_contact'] = fc
+                        foot_phase = 'landed'
+
+                # Ball release: update candidate frame on each new velocity peak
+                if is_pitching and current_v_list:
+                    if current_v_list[-1] > pitch_peak_v:
+                        pitch_peak_v  = current_v_list[-1]
+                        pitch_peak_frame = frame.copy()
+
+                # Commit ball release when pitch transitions from active → ended
+                if prev_was_pitching and not is_pitching:
+                    if pitch_peak_frame is not None and 'ball_release' not in freeze_frames:
+                        freeze_frames['ball_release'] = pitch_peak_frame
+                    pitch_peak_v, pitch_peak_frame = 0.0, None
+                prev_was_pitching = is_pitching
+
             out.write(frame)
             frame_count += 1
 
         cap.release()
         out.release()
+
+        # Save freeze frames as JPEG images and return paths
+        freeze_image_paths = []
+        base = output_path.rsplit('.', 1)[0]
+        for key, label in [
+            ('foot_lift',    '1 — Back Foot Lift'),
+            ('foot_peak',    '2 — Reach Foot Peak Height'),
+            ('foot_contact', '3 — Reach Foot Contact'),
+            ('ball_release', '4 — Ball Release'),
+        ]:
+            if key in freeze_frames:
+                img_path = f'{base}_freeze_{key}.jpg'
+                cv2.imwrite(img_path, freeze_frames[key])
+                freeze_image_paths.append({
+                    'label': label,
+                    'path':  img_path,
+                    'stride': stride_info if key == 'foot_contact' else {},
+                })
+        return freeze_image_paths
 
 def process_back(input_path, output_path, slow_mo_factor=2):
     """Back View Engine: Hip-Shoulder Separation (X-Factor)."""
