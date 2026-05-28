@@ -3,6 +3,7 @@ import mediapipe as mp
 import numpy as np
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
+from ultralytics import YOLO
 
 # --- Settings ---
 MS_TO_MPH = 2.23694
@@ -94,10 +95,16 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
     L_SH, L_HIP, L_KNEE, L_ANKLE, L_FOOT = 11, 23, 25, 27, 31
     R_SH, R_HIP, R_KNEE, R_ANKLE, R_FOOT = 12, 24, 26, 28, 32
     
-    # Arm side mapping for velocity trace
+    # Arm side mapping for velocity trace (MediaPipe indices)
     WRIST = 16 if p_side.upper() == 'RIGHT' else 15
     SHOULDER = 12 if p_side.upper() == 'RIGHT' else 11
     ELBOW = 14 if p_side.upper() == 'RIGHT' else 13
+
+    # COCO keypoint indices used by YOLOv8-pose (person's left/right, not camera's)
+    YOLO_WRIST = 10 if p_side.upper() == 'RIGHT' else 9
+
+    # Load YOLOv8-pose model for wrist detection (downloads automatically on first run)
+    yolo = YOLO('yolov8x-pose.pt')
 
     base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task')
     options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
@@ -121,6 +128,21 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
             
             timestamp_ms = int((frame_count / fps) * 1000)
             result = landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=frame), timestamp_ms)
+
+            # --- YOLO wrist detection ---
+            yolo_wrist_px, yolo_wrist_py, yolo_wrist_conf = None, None, 0.0
+            yolo_results = yolo(frame, verbose=False)
+            if (yolo_results and yolo_results[0].keypoints is not None
+                    and len(yolo_results[0].keypoints.xy) > 0):
+                kps_xy   = yolo_results[0].keypoints.xy    # (N, 17, 2) pixels
+                kps_conf = yolo_results[0].keypoints.conf  # (N, 17)
+                boxes    = yolo_results[0].boxes.xyxy      # (N, 4)
+                # Pick the largest bounding box — the pitcher is the most prominent person
+                areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in boxes]
+                best  = int(np.argmax(areas))
+                yolo_wrist_px   = float(kps_xy[best, YOLO_WRIST, 0])
+                yolo_wrist_py   = float(kps_xy[best, YOLO_WRIST, 1])
+                yolo_wrist_conf = float(kps_conf[best, YOLO_WRIST])
 
             if result.pose_landmarks:
                 lm = result.pose_landmarks[0]
@@ -178,12 +200,14 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                     cv2.line(frame, (int(lm[SHOULDER].x*w), int(lm[SHOULDER].y*h)), (int(lm[ELBOW].x*w), int(lm[ELBOW].y*h)), (255, 255, 0), 2)
                     cv2.line(frame, (int(lm[ELBOW].x*w), int(lm[ELBOW].y*h)), (int(lm[WRIST].x*w), int(lm[WRIST].y*h)), (255, 255, 0), 2)
 
-                # --- 3. WRIST TRACE & VELOCITY ---
+                # --- 3. WRIST TRACE & VELOCITY (position from YOLOv8-pose) ---
                 if display_mode in ["All", "Wrist Trace & Velocity Only"]:
-                    wrist_visible = lm[WRIST].visibility >= VISIBILITY_THRESHOLD
+                    wrist_visible = (yolo_wrist_conf >= VISIBILITY_THRESHOLD
+                                     and yolo_wrist_px is not None
+                                     and yolo_wrist_px > 0)
 
                     if wrist_visible:
-                        raw_pos = np.array([lm[WRIST].x * w, lm[WRIST].y * h])
+                        raw_pos = np.array([yolo_wrist_px, yolo_wrist_py])  # already in pixels
 
                         if smoothed_pos is None:
                             smoothed_pos = raw_pos
