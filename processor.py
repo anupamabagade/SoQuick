@@ -242,6 +242,12 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                                 prev_vel = cur_v
                         prev_pos = smoothed_pos.copy()
 
+                    # --- DRAW YOLO WRIST DETECTION MARKER ---
+                    if wrist_visible:
+                        cx, cy = int(yolo_wrist_px), int(yolo_wrist_py)
+                        cv2.circle(frame, (cx, cy), 6, (0, 255, 0), -1, cv2.LINE_AA)
+                        cv2.circle(frame, (cx, cy), 9, (255, 255, 255), 1, cv2.LINE_AA)
+
                     # --- DRAWING THE TRACE & PEAK MARKERS ---
                     # 1. Draw the Heatmap Trail
                     for i in range(1, len(trail_history)):
