@@ -113,7 +113,8 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
     base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task')
     options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
 
-    with vision.PoseLandmarker.create_from_options(options) as landmarker:
+    landmarker = vision.PoseLandmarker.create_from_options(options)
+    try:
         cap = cv2.VideoCapture(input_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -395,6 +396,8 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                     'stride': stride_info if key == 'foot_contact' else {},
                 })
         return freeze_image_paths
+    finally:
+        landmarker.close()
 
 def process_back(input_path, output_path, slow_mo_factor=2):
     """Back View Engine: Hip-Shoulder Separation (X-Factor)."""
@@ -405,7 +408,8 @@ def process_back(input_path, output_path, slow_mo_factor=2):
     base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task')
     options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
 
-    with vision.PoseLandmarker.create_from_options(options) as landmarker:
+    landmarker = vision.PoseLandmarker.create_from_options(options)
+    try:
         cap = cv2.VideoCapture(input_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -471,4 +475,6 @@ def process_back(input_path, output_path, slow_mo_factor=2):
                 out.write(final_frame)
 
         cap.release()
-        out.release()    
+        out.release()
+    finally:
+        landmarker.close()
