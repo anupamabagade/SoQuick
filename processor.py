@@ -3,7 +3,7 @@ import mediapipe as mp
 import numpy as np
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-from ultralytics import YOLO
+_yolo_model = None  # loaded lazily on first use
 
 # --- Settings ---
 MS_TO_MPH = 2.23694
@@ -107,8 +107,12 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
     REACH_ANKLE_IDX = L_ANKLE if p_side.upper() == 'RIGHT' else R_ANKLE   # 27 or 28
     DRIVE_ANKLE_IDX = R_ANKLE if p_side.upper() == 'RIGHT' else L_ANKLE   # 28 or 27
 
-    # Load YOLOv8-pose model for wrist detection (downloads automatically on first run)
-    yolo = YOLO('yolov8x-pose.pt')
+    # Lazy-load YOLO once; re-use across calls to avoid reloading PyTorch every run
+    global _yolo_model
+    if _yolo_model is None:
+        from ultralytics import YOLO
+        _yolo_model = YOLO('yolov8x-pose.pt')
+    yolo = _yolo_model
 
     base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task')
     options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
