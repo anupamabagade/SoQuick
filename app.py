@@ -26,8 +26,10 @@ def run_analysis(input_path, raw_output, web_ready, view_type, params):
     if not os.path.exists(raw_output):
         raise RuntimeError("Processor produced no output file.")
 
+    ffmpeg = "ffmpeg" if subprocess.run(["which", "ffmpeg"], capture_output=True).returncode == 0 \
+        else "/opt/homebrew/bin/ffmpeg"
     subprocess.run(
-        ["ffmpeg", "-i", raw_output, "-vcodec", "libx264",
+        [ffmpeg, "-i", raw_output, "-vcodec", "libx264",
          "-preset", "ultrafast", "-crf", "28", web_ready, "-y"],
         capture_output=True,
     )
@@ -128,7 +130,7 @@ if mode == "Single Video":
                         input_path, raw_output, web_ready, view_type, params
                     )
                     status.update(label="Analysis Complete!", state="complete", expanded=False)
-                    show_results(st, "Analysis", web_ready, freeze_frames, view_type)
+                    show_results(st.container(), "Analysis", web_ready, freeze_frames, view_type)
                 except Exception as e:
                     st.error(f"Error: {e}")
 
