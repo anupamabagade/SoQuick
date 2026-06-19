@@ -52,8 +52,8 @@ async def analyze(
             output_path     = tmp_out,
             p_height_inches = p_height,
             p_side          = p_side,
-            display_mode    = "All",
-            slow_mo_factor  = 1,   # no slow-mo needed for still images
+            display_mode    = "Angles Only",  # skips YOLO/PyTorch — fits free-tier RAM
+            slow_mo_factor  = 1,
         )
     except Exception as exc:
         _cleanup(tmp_in, tmp_out)

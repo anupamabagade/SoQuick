@@ -197,12 +197,16 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
     REACH_ANKLE_IDX = L_ANKLE if p_side.upper() == 'RIGHT' else R_ANKLE   # 27 or 28
     DRIVE_ANKLE_IDX = R_ANKLE if p_side.upper() == 'RIGHT' else L_ANKLE   # 28 or 27
 
-    # Lazy-load YOLO once; re-use across calls to avoid reloading PyTorch every run
-    global _yolo_model
-    if _yolo_model is None:
-        from ultralytics import YOLO
-        _yolo_model = YOLO('yolov8x-pose.pt')
-    yolo = _yolo_model
+    # Lazy-load YOLO only when wrist trace is needed (skipped in "Angles Only" mode)
+    use_yolo = display_mode not in ["Angles Only"]
+    if use_yolo:
+        global _yolo_model
+        if _yolo_model is None:
+            from ultralytics import YOLO
+            _yolo_model = YOLO('yolov8x-pose.pt')
+        yolo = _yolo_model
+    else:
+        yolo = None
 
     base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task')
     options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
@@ -243,9 +247,12 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
             else:
                 raw_lm_buffer.append(None)
 
-            # --- YOLO wrist detection ---
+            # --- YOLO wrist detection (skipped in Angles Only mode) ---
             yolo_wrist_px, yolo_wrist_py, yolo_wrist_conf = None, None, 0.0
-            yolo_results = yolo(frame, verbose=False)
+            if yolo is None:
+                yolo_results = []
+            else:
+                yolo_results = yolo(frame, verbose=False)
             if (yolo_results and yolo_results[0].keypoints is not None
                     and len(yolo_results[0].keypoints.xy) > 0):
                 kps_xy   = yolo_results[0].keypoints.xy    # (N, 17, 2) pixels
