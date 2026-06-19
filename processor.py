@@ -1,9 +1,99 @@
+import os
 import cv2
 import mediapipe as mp
 import numpy as np
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-_yolo_model = None  # loaded lazily on first use
+
+_yolo_model = None   # loaded lazily on first use
+_km_model   = None   # key-moment detection model, loaded lazily
+
+
+def _get_km_model():
+    global _km_model
+    if _km_model is not False and _km_model is None:
+        path = os.path.join(os.path.dirname(__file__), 'ml', 'models', 'key_moments_best.pt')
+        if os.path.exists(path):
+            try:
+                import sys, torch
+                sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'ml'))
+                from model import load_model
+                _km_model = load_model(path)
+                _km_model.eval()
+            except Exception:
+                _km_model = False   # don't retry
+        else:
+            _km_model = False
+    return _km_model if _km_model is not False else None
+
+
+def _normalize_lm(raw_lm_list):
+    """(n,33,3)-or-None list → (n,198) float32 feature array (pos + velocity)."""
+    n = len(raw_lm_list)
+    pos = np.zeros((n, 33, 3), dtype=np.float32)
+    valid = np.zeros(n, dtype=bool)
+    for i, lm in enumerate(raw_lm_list):
+        if lm is not None:
+            hip = (lm[23] + lm[24]) / 2.0
+            scale = np.linalg.norm(lm[11] - lm[12]) + 1e-6
+            pos[i] = (lm - hip) / scale
+            valid[i] = True
+    xi = np.where(valid)[0]
+    if len(xi) >= 2:
+        inv = np.where(~valid)[0]
+        if len(inv):
+            for j in range(33):
+                for k in range(3):
+                    pos[inv, j, k] = np.interp(inv, xi, pos[xi, j, k])
+    pos_flat = pos.reshape(n, 99)
+    vel_flat = np.zeros_like(pos_flat)
+    vel_flat[1:] = pos_flat[1:] - pos_flat[:-1]
+    return np.concatenate([pos_flat, vel_flat], axis=1)
+
+
+def _predict_key_moments(raw_lm_buffer, fps):
+    """
+    Run the trained model over collected landmarks.
+    Returns {key: frame_index} for whichever moments are confidently detected,
+    or {} if the model isn't available.
+    """
+    import torch
+    model = _get_km_model()
+    if model is None or len(raw_lm_buffer) < model.window:
+        return {}
+
+    features = _normalize_lm(raw_lm_buffer)
+    n = len(features)
+    W = model.window
+    half = W // 2
+    pad = np.zeros((half, 198), dtype=np.float32)
+    padded = np.concatenate([pad, features, pad], axis=0)
+
+    probs = np.zeros((n, 5), dtype=np.float32)
+    model.eval()
+    with torch.no_grad():
+        bs = 64
+        for s in range(0, n, bs):
+            e = min(s + bs, n)
+            batch = torch.from_numpy(
+                np.stack([padded[i:i + W] for i in range(s, e)])
+            )
+            probs[s:e] = torch.softmax(model(batch), dim=-1).numpy()
+
+    class_names = {1: 'foot_lift', 2: 'foot_peak', 3: 'foot_contact', 4: 'ball_release'}
+    raw = {}
+    for cls, name in class_names.items():
+        best = int(np.argmax(probs[:, cls]))
+        if probs[best, cls] > 0.3:
+            raw[name] = best
+
+    # Enforce monotone ordering
+    ordered, prev = {}, 0
+    for key in ['foot_lift', 'foot_peak', 'foot_contact', 'ball_release']:
+        if key in raw and raw[key] > prev:
+            ordered[key] = raw[key]
+            prev = raw[key]
+    return ordered
 
 # --- Settings ---
 MS_TO_MPH = 2.23694
@@ -136,6 +226,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
         freeze_frames, stride_info = {}, {}
         prev_was_pitching = False
         pitch_peak_v, pitch_peak_frame = 0.0, None
+        raw_lm_buffer = []  # accumulated for ML key-moment detection
 
         frame_count = 0
         while cap.isOpened():
@@ -144,6 +235,13 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
             
             timestamp_ms = int((frame_count / fps) * 1000)
             result = landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=frame), timestamp_ms)
+
+            # Collect landmarks for ML model (lightweight - just a numpy array)
+            if result.pose_landmarks:
+                raw_lm_buffer.append(np.array(
+                    [[l.x, l.y, l.z] for l in result.pose_landmarks[0]], dtype=np.float32))
+            else:
+                raw_lm_buffer.append(None)
 
             # --- YOLO wrist detection ---
             yolo_wrist_px, yolo_wrist_py, yolo_wrist_conf = None, None, 0.0
@@ -381,6 +479,35 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
 
         cap.release()
         out.release()
+
+        # ML key-moment override: if model is available, replace heuristic results
+        ml_targets = _predict_key_moments(raw_lm_buffer, fps)
+        if ml_targets:
+            cap2 = cv2.VideoCapture(input_path)
+            for key, fidx in ml_targets.items():
+                cap2.set(cv2.CAP_PROP_POS_FRAMES, fidx)
+                ret2, raw_frame = cap2.read()
+                if not ret2:
+                    continue
+                if key == 'foot_contact':
+                    lm_arr = raw_lm_buffer[fidx]
+                    if lm_arr is not None:
+                        ppm_local = abs(lm_arr[30, 1] * h - lm_arr[0, 1] * h) / p_height_m
+                        ra, da = lm_arr[REACH_ANKLE_IDX], lm_arr[DRIVE_ANKLE_IDX]
+                        rx, ry = int(ra[0] * w), int(ra[1] * h)
+                        dx, dy = int(da[0] * w), int(da[1] * h)
+                        horiz_px = abs(ra[0] * w - da[0] * w)
+                        full_px  = float(np.linalg.norm([(ra[0]-da[0])*w, (ra[1]-da[1])*h]))
+                        stride_info = {
+                            'horiz_ft': round(horiz_px / ppm_local * 3.28084, 1),
+                            'full_ft':  round(full_px  / ppm_local * 3.28084, 1),
+                        }
+                        cv2.line(raw_frame, (rx, ry), (dx, dy), (0, 255, 255), 3, cv2.LINE_AA)
+                        cv2.putText(raw_frame, f"FEET APART: {stride_info['full_ft']} ft",
+                                    ((rx+dx)//2 - 140, min(ry, dy) - 20),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2, cv2.LINE_AA)
+                freeze_frames[key] = raw_frame
+            cap2.release()
 
         # Save freeze frames as JPEG images and return paths
         freeze_image_paths = []
