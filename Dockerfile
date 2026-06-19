@@ -11,8 +11,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download the YOLO pose model so it's baked into the image
+# (avoids a 133 MB download on every cold start)
+RUN python3 -c "from ultralytics import YOLO; YOLO('yolov8x-pose.pt')"
+
 COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "300"]
+# Increase keep-alive timeout to handle long analysis requests (2–3 min)
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--timeout-keep-alive", "300"]
