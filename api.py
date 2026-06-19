@@ -33,6 +33,22 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/debug")
+def debug():
+    import subprocess, platform
+    gles = subprocess.run(
+        ["find", "/usr", "-name", "libGLESv2*"], capture_output=True, text=True
+    ).stdout.strip()
+    egl = subprocess.run(
+        ["find", "/usr", "-name", "libEGL*"], capture_output=True, text=True
+    ).stdout.strip()
+    return {
+        "arch":      platform.machine(),
+        "libGLESv2": gles or "NOT FOUND",
+        "libEGL":    egl  or "NOT FOUND",
+    }
+
+
 @app.post("/analyze")
 async def analyze(
     video:    UploadFile = File(...),
