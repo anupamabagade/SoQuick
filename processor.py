@@ -208,7 +208,8 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
     else:
         yolo = None
 
-    base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task')
+    base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task',
+                                      delegate=python.BaseOptions.Delegate.CPU)
     options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
 
     landmarker = vision.PoseLandmarker.create_from_options(options)
@@ -543,7 +544,8 @@ def process_back(input_path, output_path, slow_mo_factor=2):
     L_SH, R_SH = 11, 12
     L_HIP, R_HIP = 23, 24
 
-    base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task')
+    base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task',
+                                      delegate=python.BaseOptions.Delegate.CPU)
     options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
 
     landmarker = vision.PoseLandmarker.create_from_options(options)
