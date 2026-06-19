@@ -56,8 +56,12 @@ async def analyze(
             slow_mo_factor  = 1,
         )
     except Exception as exc:
+        import traceback
         _cleanup(tmp_in, tmp_out)
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+        })
 
     results = []
     for ff in freeze_frames:
