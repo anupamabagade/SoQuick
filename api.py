@@ -37,15 +37,16 @@ def health():
 def debug():
     import subprocess, platform
     gles = subprocess.run(
-        ["find", "/usr", "-name", "libGLESv2*"], capture_output=True, text=True
+        ["find", "/", "-name", "libGLESv2*", "-not", "-path", "*/proc/*"],
+        capture_output=True, text=True
     ).stdout.strip()
-    egl = subprocess.run(
-        ["find", "/usr", "-name", "libEGL*"], capture_output=True, text=True
+    pkgs = subprocess.run(
+        ["dpkg", "-l", "*gles*"], capture_output=True, text=True
     ).stdout.strip()
     return {
         "arch":      platform.machine(),
         "libGLESv2": gles or "NOT FOUND",
-        "libEGL":    egl  or "NOT FOUND",
+        "gles_pkgs": pkgs,
     }
 
 
