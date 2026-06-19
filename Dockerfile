@@ -20,5 +20,4 @@ COPY . .
 EXPOSE 8000
 
 # Increase keep-alive timeout to handle long analysis requests (2–3 min)
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", \
-     "--timeout-keep-alive", "300"]
+CMD uvicorn api:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 300
