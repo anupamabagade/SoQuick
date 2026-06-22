@@ -33,6 +33,30 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/model-test")
+def model_test():
+    """Tries to create a PoseLandmarker and reports success or the exact error."""
+    import traceback, os
+    model_path = os.environ.get("MEDIAPIPE_MODEL_PATH", "pose_landmarker_heavy.task")
+    model_exists = os.path.exists(model_path)
+    try:
+        from mediapipe.tasks import python as mp_python
+        from mediapipe.tasks.python import vision
+        opts = vision.PoseLandmarkerOptions(
+            base_options=mp_python.BaseOptions(
+                model_asset_path=model_path,
+                delegate=mp_python.BaseOptions.Delegate.CPU,
+            ),
+            running_mode=vision.RunningMode.VIDEO,
+        )
+        lm = vision.PoseLandmarker.create_from_options(opts)
+        lm.close()
+        return {"status": "ok", "model": model_path, "model_exists": model_exists}
+    except Exception as exc:
+        return {"status": "error", "model": model_path, "model_exists": model_exists,
+                "error": str(exc), "traceback": traceback.format_exc()}
+
+
 @app.get("/debug")
 def debug():
     import subprocess, platform
