@@ -6,4 +6,6 @@ services:
     envVars:
       - key: PORT
         value: 8000
+      - key: MEDIAPIPE_MODEL_PATH
+        value: pose_landmarker_lite.task
     healthCheckPath: /health

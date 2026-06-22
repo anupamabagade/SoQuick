@@ -36,17 +36,23 @@ def health():
 @app.get("/debug")
 def debug():
     import subprocess, platform
-    gles = subprocess.run(
-        ["find", "/", "-name", "libGLESv2*", "-not", "-path", "*/proc/*"],
+    ldconfig = subprocess.run(
+        ["ldconfig", "-p"], capture_output=True, text=True
+    ).stdout
+    gles_cached = [l.strip() for l in ldconfig.splitlines() if "GLES" in l or "gles" in l.lower()]
+    all_gl = subprocess.run(
+        ["find", "/", "-name", "lib*GL*", "-not", "-path", "*/proc/*"],
         capture_output=True, text=True
     ).stdout.strip()
     pkgs = subprocess.run(
-        ["dpkg", "-l", "*gles*"], capture_output=True, text=True
-    ).stdout.strip()
+        ["dpkg", "-l"], capture_output=True, text=True
+    ).stdout
+    gl_pkgs = [l for l in pkgs.splitlines() if "gl" in l.lower() or "egl" in l.lower() or "gles" in l.lower()]
     return {
-        "arch":      platform.machine(),
-        "libGLESv2": gles or "NOT FOUND",
-        "gles_pkgs": pkgs,
+        "arch":         platform.machine(),
+        "gles_ldconfig": gles_cached,
+        "all_gl_files":  all_gl or "NONE",
+        "gl_packages":   gl_pkgs,
     }
 
 

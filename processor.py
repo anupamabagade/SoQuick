@@ -8,6 +8,9 @@ from mediapipe.tasks.python import vision
 _yolo_model = None   # loaded lazily on first use
 _km_model   = None   # key-moment detection model, loaded lazily
 
+# Allow override via env var so the API can use the lite model to fit in 512MB RAM
+_POSE_MODEL = os.environ.get('MEDIAPIPE_MODEL_PATH', 'pose_landmarker_heavy.task')
+
 
 def _get_km_model():
     global _km_model
@@ -208,7 +211,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
     else:
         yolo = None
 
-    base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task',
+    base_options = python.BaseOptions(model_asset_path=_POSE_MODEL,
                                       delegate=python.BaseOptions.Delegate.CPU)
     options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
 
@@ -544,7 +547,7 @@ def process_back(input_path, output_path, slow_mo_factor=2):
     L_SH, R_SH = 11, 12
     L_HIP, R_HIP = 23, 24
 
-    base_options = python.BaseOptions(model_asset_path='pose_landmarker_heavy.task',
+    base_options = python.BaseOptions(model_asset_path=_POSE_MODEL,
                                       delegate=python.BaseOptions.Delegate.CPU)
     options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
 
