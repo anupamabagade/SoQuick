@@ -1,73 +1,100 @@
 import Foundation
+import UIKit
 
-struct AnalysisParams {
-    var viewType: String       // "lateral" or "back"
-    var pHeight: Int           // inches
-    var pSide: String          // "Right" or "Left"
-    var displayMode: String    // "All" / "Wrist Trace & Velocity Only" / "Arm Angles Only" / "Leg Angles Only"
-    var slowMo: Int            // 1–4
+struct FreezeFrame: Identifiable {
+    let id = UUID()
+    let label: String
+    let image: UIImage
+    let stride: [String: Double]
 }
 
 enum AnalysisError: LocalizedError {
     case serverError(String)
-    case noData
+    case noFrames
+    case badResponse
 
     var errorDescription: String? {
         switch self {
         case .serverError(let msg): return "Server error: \(msg)"
-        case .noData: return "No data returned from server."
+        case .noFrames:            return "No key moments detected in this video."
+        case .badResponse:         return "Unexpected response from server."
         }
     }
 }
 
 class AnalysisService {
-    // Replace with your deployed Render URL after deployment.
-    // For local testing use: http://localhost:8000
-    static let baseURL = "http://localhost:8000"
+    static let shared = AnalysisService()
+    private let baseURL = "https://soquick.onrender.com"
 
-    static func analyze(videoURL: URL, params: AnalysisParams) async throws -> URL {
-        let boundary = "Boundary-\(UUID().uuidString)"
-        var request = URLRequest(url: URL(string: "\(baseURL)/analyze")!)
+    func analyze(videoURL: URL, height: Int, side: String) async throws -> [FreezeFrame] {
+        let endpoint = URL(string: "\(baseURL)/analyze")!
+        var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = 300
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        var body = Data()
-
-        func appendField(_ name: String, _ value: String) {
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
-            body.append("\(value)\r\n".data(using: .utf8)!)
-        }
-
-        appendField("view_type",    params.viewType)
-        appendField("p_height",     "\(params.pHeight)")
-        appendField("p_side",       params.pSide)
-        appendField("display_mode", params.displayMode)
-        appendField("slow_mo",      "\(params.slowMo)")
+        let boundary = "Boundary-\(UUID().uuidString)"
+        request.setValue("multipart/form-data; boundary=\(boundary)",
+                         forHTTPHeaderField: "Content-Type")
 
         let videoData = try Data(contentsOf: videoURL)
-        let filename = videoURL.lastPathComponent
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"video\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: video/mp4\r\n\r\n".data(using: .utf8)!)
-        body.append(videoData)
-        body.append("\r\n".data(using: .utf8)!)
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        var body = Data()
+        body.appendFilePart(name: "video", filename: "pitch.mp4",
+                            mimeType: "video/mp4", data: videoData, boundary: boundary)
+        body.appendTextPart(name: "p_height", value: "\(height)", boundary: boundary)
+        body.appendTextPart(name: "p_side",   value: side,        boundary: boundary)
+        body.append("--\(boundary)--\r\n")
 
         request.httpBody = body
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let http = response as? HTTPURLResponse else { throw AnalysisError.noData }
-        guard http.statusCode == 200 else {
-            let msg = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw AnalysisError.serverError("HTTP \(http.statusCode): \(msg)")
+        guard let http = response as? HTTPURLResponse else { throw AnalysisError.badResponse }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AnalysisError.badResponse
         }
 
-        let resultURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("soquick_result_\(UUID().uuidString).mp4")
-        try data.write(to: resultURL)
-        return resultURL
+        if http.statusCode != 200 {
+            let msg = json["error"] as? String ?? "HTTP \(http.statusCode)"
+            throw AnalysisError.serverError(msg)
+        }
+
+        guard let framesJSON = json["freeze_frames"] as? [[String: Any]] else {
+            throw AnalysisError.noFrames
+        }
+
+        let frames: [FreezeFrame] = framesJSON.compactMap { f in
+            guard let label   = f["label"]     as? String,
+                  let b64     = f["image_b64"] as? String,
+                  let imgData = Data(base64Encoded: b64),
+                  let image   = UIImage(data: imgData) else { return nil }
+            let stride = f["stride"] as? [String: Double] ?? [:]
+            return FreezeFrame(label: label, image: image, stride: stride)
+        }
+
+        if frames.isEmpty { throw AnalysisError.noFrames }
+        return frames
+    }
+}
+
+private extension Data {
+    mutating func appendFilePart(name: String, filename: String,
+                                 mimeType: String, data: Data, boundary: String) {
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\n")
+        append("Content-Type: \(mimeType)\r\n\r\n")
+        append(data)
+        append("\r\n")
+    }
+
+    mutating func appendTextPart(name: String, value: String, boundary: String) {
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
+        append(value)
+        append("\r\n")
+    }
+
+    mutating func append(_ string: String) {
+        if let d = string.data(using: .utf8) { append(d) }
     }
 }
