@@ -5,11 +5,69 @@ import numpy as np
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-_yolo_model = None   # loaded lazily on first use
-_km_model   = None   # key-moment detection model, loaded lazily
+_yolo_model  = None   # loaded lazily on first use
+_km_model    = None   # key-moment detection model, loaded lazily
+_wrist_model = None   # WristNet correction model, loaded lazily
 
 # Allow override via env var so the API can use the lite model to fit in 512MB RAM
 _POSE_MODEL = os.environ.get('MEDIAPIPE_MODEL_PATH', 'pose_landmarker_heavy.task')
+
+
+class _LM:
+    """Lightweight landmark proxy — stores x, y, z, visibility as plain floats."""
+    __slots__ = ('x', 'y', 'z', 'visibility')
+    def __init__(self, x, y, z, v=1.0):
+        self.x, self.y, self.z, self.visibility = float(x), float(y), float(z), float(v)
+
+
+def _get_wrist_model():
+    global _wrist_model
+    if _wrist_model is not False and _wrist_model is None:
+        path = os.path.join(os.path.dirname(__file__), 'ml', 'wrist', 'models', 'wrist_best.pt')
+        if os.path.exists(path):
+            try:
+                import sys, torch
+                sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'ml', 'wrist'))
+                from wrist_model import load_model as _load_wrist
+                _wrist_model = _load_wrist(path)
+                _wrist_model.eval()
+            except Exception:
+                _wrist_model = False
+        else:
+            _wrist_model = False
+    return _wrist_model if _wrist_model is not False else None
+
+
+def _run_wristnet(model, raw_lm_arrs, yolo_per_frame, w, h):
+    """Returns list of (x_px, y_px) per frame using WristNet correction model."""
+    import torch
+    n      = len(raw_lm_arrs)
+    WINDOW = model.window
+    HALF   = WINDOW // 2
+
+    mp_feats   = _normalize_lm(raw_lm_arrs)             # (n, 198)
+    yolo_feats = np.zeros((n, 3), np.float32)
+    for i, yp in enumerate(yolo_per_frame):
+        if yp is not None and yp[0] > 0:
+            yolo_feats[i, 0] = yp[0] / w
+            yolo_feats[i, 1] = yp[1] / h
+            yolo_feats[i, 2] = yp[2]
+
+    features = np.concatenate([mp_feats, yolo_feats], axis=1)   # (n, 201)
+    pad      = np.zeros((HALF, features.shape[1]), np.float32)
+    padded   = np.concatenate([pad, features, pad])
+
+    preds = np.zeros((n, 2), np.float32)
+    model.eval()
+    with torch.no_grad():
+        bs = 64
+        for s in range(0, n, bs):
+            e     = min(s + bs, n)
+            batch = torch.from_numpy(
+                np.stack([padded[i: i + WINDOW] for i in range(s, e)]))
+            preds[s:e] = model(batch).numpy()
+
+    return [(float(preds[i, 0] * w), float(preds[i, 1] * h)) for i in range(n)]
 
 
 def _get_km_model():
@@ -181,26 +239,18 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
     p_height_m = p_height_inches * 0.0254
     v_start_thresh, v_stop_thresh = 3.5, 5.0
     stop_buffer = 25
-    
-    # 1. FIXED LANDMARK MAPPING (Absolute Left vs Right)
-    # MediaPipe indices are constant: Left=11,13,15,23,25,27,31 | Right=12,14,16,24,26,28,32
+
     L_SH, L_HIP, L_KNEE, L_ANKLE, L_FOOT = 11, 23, 25, 27, 31
     R_SH, R_HIP, R_KNEE, R_ANKLE, R_FOOT = 12, 24, 26, 28, 32
-    
-    # Arm side mapping for velocity trace (MediaPipe indices)
-    WRIST = 16 if p_side.upper() == 'RIGHT' else 15
+
+    WRIST    = 16 if p_side.upper() == 'RIGHT' else 15
     SHOULDER = 12 if p_side.upper() == 'RIGHT' else 11
-    ELBOW = 14 if p_side.upper() == 'RIGHT' else 13
+    ELBOW    = 14 if p_side.upper() == 'RIGHT' else 13
+    YOLO_WRIST      = 10 if p_side.upper() == 'RIGHT' else 9
+    REACH_FOOT_IDX  = L_FOOT  if p_side.upper() == 'RIGHT' else R_FOOT
+    REACH_ANKLE_IDX = L_ANKLE if p_side.upper() == 'RIGHT' else R_ANKLE
+    DRIVE_ANKLE_IDX = R_ANKLE if p_side.upper() == 'RIGHT' else L_ANKLE
 
-    # COCO keypoint indices used by YOLOv8-pose (person's left/right, not camera's)
-    YOLO_WRIST = 10 if p_side.upper() == 'RIGHT' else 9
-
-    # Freeze frame: reach/stride foot = left for RH pitcher, right for LH pitcher
-    REACH_FOOT_IDX  = L_FOOT  if p_side.upper() == 'RIGHT' else R_FOOT    # 31 or 32
-    REACH_ANKLE_IDX = L_ANKLE if p_side.upper() == 'RIGHT' else R_ANKLE   # 27 or 28
-    DRIVE_ANKLE_IDX = R_ANKLE if p_side.upper() == 'RIGHT' else L_ANKLE   # 28 or 27
-
-    # Lazy-load YOLO only when wrist trace is needed (skipped in "Angles Only" mode)
     use_yolo = display_mode not in ["Angles Only"]
     if use_yolo:
         global _yolo_model
@@ -213,333 +263,356 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
 
     base_options = python.BaseOptions(model_asset_path=_POSE_MODEL,
                                       delegate=python.BaseOptions.Delegate.CPU)
-    options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
+    options = vision.PoseLandmarkerOptions(base_options=base_options,
+                                           running_mode=vision.RunningMode.VIDEO)
 
+    # ── PHASE 1: collect MediaPipe + YOLO data ─────────────────────────────────
     landmarker = vision.PoseLandmarker.create_from_options(options)
     try:
         cap = cv2.VideoCapture(input_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
-        w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps / slow_mo_factor, (w, h))
+        w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-        trail_history, peak_marker = [], []
-        prev_pos, prev_vel = None, 0
-        is_pitching, pitch_count, low_speed_timer = False, 0, 0
-        current_x_coords, current_y_coords, current_v_list = [], [], []
+        raw_lm_arrs    = []   # (33,3) float32 or None — for WristNet + key moments
+        mp_lm_data     = []   # [_LM, ...] or None     — for angle drawing in Phase 2
+        yolo_per_frame = []   # (x_px, y_px, conf) or None
+        ppms           = []   # pixels-per-metre or None
 
-        # --- Freeze frame state ---
+        # Freeze-frame state (records frame *indices*, captured in Phase 2)
         gnd_samples, ground_y = [], None
-        foot_phase = 'calibrating'   # → 'on_ground' → 'in_air' → 'landed'
-        min_reach_y, min_reach_frame = 1.0, None
-        freeze_frames, stride_info = {}, {}
-        prev_was_pitching = False
-        pitch_peak_v, pitch_peak_frame = 0.0, None
-        raw_lm_buffer = []  # accumulated for ML key-moment detection
+        foot_phase = 'calibrating'
+        min_reach_y, min_reach_fidx = 1.0, None
+        freeze_events = {}   # key → frame_index
+        stride_info   = {}
 
         frame_count = 0
         while cap.isOpened():
             ret, frame = cap.read()
-            if not ret: break
-            
-            timestamp_ms = int((frame_count / fps) * 1000)
-            result = landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=frame), timestamp_ms)
+            if not ret:
+                break
 
-            # Collect landmarks for ML model (lightweight - just a numpy array)
+            ts_ms  = int((frame_count / fps) * 1000)
+            rgb    = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            result = landmarker.detect_for_video(
+                mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ts_ms)
+
             if result.pose_landmarks:
-                raw_lm_buffer.append(np.array(
-                    [[l.x, l.y, l.z] for l in result.pose_landmarks[0]], dtype=np.float32))
+                lm      = result.pose_landmarks[0]
+                lm_arr  = np.array([[l.x, l.y, l.z] for l in lm], dtype=np.float32)
+                lm_obj  = [_LM(l.x, l.y, l.z, l.visibility) for l in lm]
+                ppm_val = abs(lm[30].y * h - lm[0].y * h) / p_height_m
             else:
-                raw_lm_buffer.append(None)
+                lm_arr, lm_obj, ppm_val = None, None, None
 
-            # --- YOLO wrist detection (skipped in Angles Only mode) ---
-            yolo_wrist_px, yolo_wrist_py, yolo_wrist_conf = None, None, 0.0
-            if yolo is None:
-                yolo_results = []
-            else:
-                yolo_results = yolo(frame, verbose=False)
-            if (yolo_results and yolo_results[0].keypoints is not None
-                    and len(yolo_results[0].keypoints.xy) > 0):
-                kps_xy   = yolo_results[0].keypoints.xy    # (N, 17, 2) pixels
-                kps_conf = yolo_results[0].keypoints.conf  # (N, 17)
-                boxes    = yolo_results[0].boxes.xyxy      # (N, 4)
-                # Pick the largest bounding box — the pitcher is the most prominent person
-                areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in boxes]
-                best  = int(np.argmax(areas))
-                yolo_wrist_px   = float(kps_xy[best, YOLO_WRIST, 0])
-                yolo_wrist_py   = float(kps_xy[best, YOLO_WRIST, 1])
-                yolo_wrist_conf = float(kps_conf[best, YOLO_WRIST])
+            raw_lm_arrs.append(lm_arr)
+            mp_lm_data.append(lm_obj)
+            ppms.append(ppm_val)
 
-            if result.pose_landmarks:
-                lm = result.pose_landmarks[0]
-                ppm = abs(lm[30].y * h - lm[0].y * h) / p_height_m
+            # YOLO wrist detection
+            yp = None
+            if yolo is not None:
+                yr = yolo(frame, verbose=False)
+                if yr and yr[0].keypoints is not None and len(yr[0].keypoints.xy) > 0:
+                    kps_xy   = yr[0].keypoints.xy
+                    kps_conf = yr[0].keypoints.conf
+                    boxes    = yr[0].boxes.xyxy
+                    areas    = [(b[2]-b[0])*(b[3]-b[1]) for b in boxes]
+                    best     = int(np.argmax(areas))
+                    yp = (float(kps_xy[best, YOLO_WRIST, 0]),
+                          float(kps_xy[best, YOLO_WRIST, 1]),
+                          float(kps_conf[best, YOLO_WRIST]))
+            yolo_per_frame.append(yp)
 
-                # --- 1. DUAL LEG CALCULATIONS (No jumping) ---
-                if display_mode in ["All", "Leg Angles Only"]:
-                    # 1. Determine which hip is closer (Lower Z = Closer)
-                    if lm[L_HIP].z < lm[R_HIP].z:
-                        # Left Hip is facing camera
-                        hip_label = "L-HIP"
-                        hip_color = (0, 165, 255) # Orange
-                        hip_raw = get_angle_3d(lm[L_SH], lm[L_HIP], lm[L_KNEE])
-                        active_hip_ang = hip_raw if hip_raw <= 180 else 360 - hip_raw
-                        # Draw Left Hip Protractor
-                        draw_protractor(frame, lm[L_HIP], lm[L_SH], lm[L_KNEE], active_hip_ang, hip_color)
-                    else:
-                        # Right Hip is facing camera
-                        hip_label = "R-HIP"
-                        hip_color = (255, 0, 255) # Magenta
-                        hip_raw = get_angle_3d(lm[R_SH], lm[R_HIP], lm[R_KNEE])
-                        active_hip_ang = hip_raw if hip_raw <= 180 else 360 - hip_raw
-                        # Draw Right Hip Protractor
-                        draw_protractor(frame, lm[R_HIP], lm[R_SH], lm[R_KNEE], active_hip_ang, hip_color)
-                    
-                    # LEFT LEG Calculations
-                    l_knee_r = get_angle_3d(lm[L_HIP], lm[L_KNEE], lm[L_ANKLE])
-                    l_ank_r = get_angle_3d(lm[L_KNEE], lm[L_ANKLE], lm[L_FOOT])
-                    left_knee = l_knee_r if l_knee_r <= 180 else 360 - l_knee_r
-                    left_ankle = l_ank_r if l_ank_r <= 180 else 360 - l_ank_r
-
-                    # RIGHT LEG Calculations
-                    r_knee_r = get_angle_3d(lm[R_HIP], lm[R_KNEE], lm[R_ANKLE])
-                    r_ank_r = get_angle_3d(lm[R_KNEE], lm[R_ANKLE], lm[R_FOOT])
-                    right_knee = r_knee_r if r_knee_r <= 180 else 360 - r_knee_r
-                    right_ankle = r_ank_r if r_ank_r <= 180 else 360 - r_ank_r
-
-                    # --- DRAW LEFT LEG (Yellow/Cyan) ---
-                    draw_protractor(frame, lm[L_KNEE], lm[L_HIP], lm[L_ANKLE], left_knee, (0, 255, 255))
-                    draw_protractor(frame, lm[L_ANKLE], lm[L_KNEE], lm[L_FOOT], left_ankle, (255, 255, 0))
-                    cv2.line(frame, (int(lm[L_HIP].x*w), int(lm[L_HIP].y*h)), (int(lm[L_KNEE].x*w), int(lm[L_KNEE].y*h)), (0, 255, 255), 2)
-                    cv2.line(frame, (int(lm[L_KNEE].x*w), int(lm[L_KNEE].y*h)), (int(lm[L_ANKLE].x*w), int(lm[L_ANKLE].y*h)), (0, 255, 255), 2)
-
-                    # --- DRAW RIGHT LEG (Green/Magenta) ---
-                    draw_protractor(frame, lm[R_KNEE], lm[R_HIP], lm[R_ANKLE], right_knee, (0, 255, 0))
-                    draw_protractor(frame, lm[R_ANKLE], lm[R_KNEE], lm[R_FOOT], right_ankle, ((180, 105, 255)))
-                    cv2.line(frame, (int(lm[R_HIP].x*w), int(lm[R_HIP].y*h)), (int(lm[R_KNEE].x*w), int(lm[R_KNEE].y*h)), (0, 255, 0), 2)
-                    cv2.line(frame, (int(lm[R_KNEE].x*w), int(lm[R_KNEE].y*h)), (int(lm[R_ANKLE].x*w), int(lm[R_ANKLE].y*h)), (0, 255, 0), 2)
-
-                # --- 2. ARM ANGLES ---
-                if display_mode in ["All", "Arm Angles Only"]:
-                    elbow_raw = get_angle_3d(lm[SHOULDER], lm[ELBOW], lm[WRIST])
-                    elbow_ang = elbow_raw if elbow_raw <= 180 else 360 - elbow_raw
-                    draw_protractor(frame, lm[ELBOW], lm[SHOULDER], lm[WRIST], elbow_ang, (255, 255, 0))
-                    cv2.line(frame, (int(lm[SHOULDER].x*w), int(lm[SHOULDER].y*h)), (int(lm[ELBOW].x*w), int(lm[ELBOW].y*h)), (255, 255, 0), 2)
-                    cv2.line(frame, (int(lm[ELBOW].x*w), int(lm[ELBOW].y*h)), (int(lm[WRIST].x*w), int(lm[WRIST].y*h)), (255, 255, 0), 2)
-
-                # --- 3. WRIST TRACE & VELOCITY (position from YOLOv8-pose) ---
-                if display_mode in ["All", "Wrist Trace & Velocity Only"]:
-                    wrist_visible = (yolo_wrist_conf >= VISIBILITY_THRESHOLD
-                                     and yolo_wrist_px is not None
-                                     and yolo_wrist_px > 0)
-
-                    if wrist_visible:
-                        raw_pos = np.array([yolo_wrist_px, yolo_wrist_py])
-
-                        if prev_pos is not None:
-                            jump_px = np.linalg.norm(raw_pos - prev_pos)
-
-                            if jump_px > MAX_JUMP_PX:
-                                # Likely misidentification — keep prev_pos anchored to last good position
-                                pass
-                            else:
-                                dt = 1 / fps
-                                cur_v = (jump_px / ppm) / dt
-
-                                if cur_v <= MAX_PHYSICAL_VELOCITY:
-                                    if cur_v > v_start_thresh:
-                                        is_pitching = True
-                                        trail_history.append((int(raw_pos[0]), int(raw_pos[1]), cur_v))
-                                        current_v_list.append(cur_v)
-                                        current_x_coords.append(raw_pos[0])
-                                        current_y_coords.append(raw_pos[1])
-
-                                    if is_pitching and cur_v < v_stop_thresh:
-                                        low_speed_timer += 1
-                                        if low_speed_timer > stop_buffer:
-                                            pitch_count += 1
-                                            p_idx = np.argmax(current_v_list)
-                                            peak_marker.append((int(current_x_coords[p_idx]), int(current_y_coords[p_idx]), round(current_v_list[p_idx] * MS_TO_MPH, 1)))
-                                            is_pitching, low_speed_timer = False, 0
-                                            current_v_list, current_x_coords, current_y_coords = [], [], []
-
-                                    prev_vel = cur_v
-
-                                prev_pos = raw_pos.copy()  # only update on accepted frames
-                        else:
-                            prev_pos = raw_pos.copy()
-
-                    # --- DRAW YOLO WRIST DETECTION MARKER ---
-                    if wrist_visible:
-                        cx, cy = int(yolo_wrist_px), int(yolo_wrist_py)
-                        cv2.circle(frame, (cx, cy), 6, (0, 255, 0), -1, cv2.LINE_AA)
-                        cv2.circle(frame, (cx, cy), 9, (255, 255, 255), 1, cv2.LINE_AA)
-
-                    # --- DRAWING THE TRACE & PEAK MARKERS ---
-                    # 1. Draw the Heatmap Trail
-                    for i in range(1, len(trail_history)):
-                        cv2.line(frame, trail_history[i-1][:2], trail_history[i][:2], 
-                                 get_heatmap_color(trail_history[i][2]), 10, cv2.LINE_AA)
-                    
-                    # 2. Draw the Peak Markers (Circle + Text)
-                    for px, py, mph in peak_marker:
-                        # Draw a bright outer ring and a white center dot
-                        cv2.circle(frame, (px, py), 12, (0, 255, 255), 3, cv2.LINE_AA) # Yellow ring
-                        cv2.circle(frame, (px, py), 4, (255, 255, 255), -1, cv2.LINE_AA) # White center
-                        
-                        # Add the MPH text right above the point
-                        cv2.putText(frame, f"{mph} MPH", (px - 40, py - 20), 
-                                    cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
-
-            # --- CLEANED DASHBOARD (Top Left) ---
-            # Box size adjusted for better spacing
-            cv2.rectangle(frame, (10, 20), (380, 450), (0, 0, 0), -1) 
-            cv2.rectangle(frame, (10, 20), (380, 450), (100, 100, 100), 2) 
-
-            # Header
-            cv2.putText(frame, "DASHBOARD", (30, 65), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
-            cv2.line(frame, (30, 80), (350, 80), (150, 150, 150), 1)
-
-            # --- Row 1: Camera Facing Hip ---
-            if 'active_hip_ang' in locals():
-                cv2.putText(frame, f"{hip_label}: {int(active_hip_ang)} deg", (30, 125), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2) # MAGENTA
-
-            # --- Row 2: Left Leg Data ---
-            if 'left_knee' in locals():
-                cv2.putText(frame, f"L-KNEE: {int(left_knee)} deg", (30, 170), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2) # CYAN
-                cv2.putText(frame, f"L-ANKLE: {int(left_ankle)} deg", (30, 215), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2) # YELLOW
-
-            # --- Row 3: Right Leg Data ---
-            if 'right_knee' in locals():
-                cv2.putText(frame, f"R-KNEE: {int(right_knee)} deg", (30, 260), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)   # GREEN
-                cv2.putText(frame, f"R-ANKLE: {int(right_ankle)} deg", (30, 305), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 105, 255), 2) # PURPLE/VIOLET
-
-            # --- Row 4: Pitch Data ---
-            if display_mode in ["All", "Wrist Trace & Velocity Only"]:
-                cv2.putText(frame, f"SPEED: {prev_vel * 2.23694:.1f} MPH", (30, 370), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                cv2.putText(frame, f"COUNT: {pitch_count}", (30, 415), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-            # --- FREEZE FRAME DETECTION (after all drawing) ---
-            if result.pose_landmarks:
-                lm_f = result.pose_landmarks[0]
-                rf_y  = lm_f[REACH_FOOT_IDX].y
-
-                # Phase 1: calibrate ground level from first 20 detected frames
+            # Freeze-frame state machine (records indices only)
+            if lm_obj is not None:
+                rf_y = lm_obj[REACH_FOOT_IDX].y
                 if foot_phase == 'calibrating':
                     gnd_samples.append(rf_y)
                     if len(gnd_samples) == 20:
-                        ground_y = float(np.median(gnd_samples))
+                        ground_y   = float(np.median(gnd_samples))
                         foot_phase = 'on_ground'
-
-                # Phase 2: wait for foot to lift (threshold: 3% of frame height above ground)
                 elif foot_phase == 'on_ground':
-                    if 'foot_lift' not in freeze_frames and rf_y < ground_y - 0.03:
-                        freeze_frames['foot_lift'] = frame.copy()
-                        foot_phase = 'in_air'
-                        min_reach_y  = rf_y
-                        min_reach_frame = frame.copy()
-
-                # Phase 3: track foot in air — record peak, detect landing
+                    if 'foot_lift' not in freeze_events and rf_y < ground_y - 0.03:
+                        freeze_events['foot_lift'] = frame_count
+                        foot_phase      = 'in_air'
+                        min_reach_y     = rf_y
+                        min_reach_fidx  = frame_count
                 elif foot_phase == 'in_air':
                     if rf_y < min_reach_y:
-                        min_reach_y = rf_y
-                        min_reach_frame = frame.copy()
-                    elif rf_y >= ground_y - 0.05:   # foot returned to ground level
-                        if 'foot_peak' not in freeze_frames and min_reach_frame is not None:
-                            freeze_frames['foot_peak'] = min_reach_frame
-                        if 'foot_contact' not in freeze_frames:
-                            fc = frame.copy()
-                            ra = lm_f[REACH_ANKLE_IDX]
-                            da = lm_f[DRIVE_ANKLE_IDX]
-                            rx, ry = int(ra.x * w), int(ra.y * h)
-                            dx, dy = int(da.x * w), int(da.y * h)
-                            horiz_px = abs(ra.x * w - da.x * w)
-                            full_px  = float(np.linalg.norm([ra.x*w - da.x*w, ra.y*h - da.y*h]))
+                        min_reach_y    = rf_y
+                        min_reach_fidx = frame_count
+                    elif rf_y >= ground_y - 0.05:
+                        if 'foot_peak' not in freeze_events and min_reach_fidx is not None:
+                            freeze_events['foot_peak'] = min_reach_fidx
+                        if 'foot_contact' not in freeze_events:
+                            ra  = lm_obj[REACH_ANKLE_IDX]
+                            da  = lm_obj[DRIVE_ANKLE_IDX]
+                            loc = ppm_val or 1.0
                             stride_info = {
-                                'horiz_ft': round(horiz_px / ppm * 3.28084, 1),
-                                'full_ft':  round(full_px  / ppm * 3.28084, 1),
+                                'horiz_ft': round(abs(ra.x*w - da.x*w) / loc * 3.28084, 1),
+                                'full_ft':  round(float(np.linalg.norm(
+                                    [(ra.x-da.x)*w, (ra.y-da.y)*h])) / loc * 3.28084, 1),
                             }
-                            # Annotate stride measurement on the captured frame
+                            freeze_events['foot_contact'] = frame_count
+                        foot_phase = 'landed'
+
+            frame_count += 1
+
+        cap.release()
+    finally:
+        landmarker.close()
+
+    n = frame_count
+
+    # ── WRISTNET CORRECTION ────────────────────────────────────────────────────
+    wrist_model = _get_wrist_model() if use_yolo else None
+    if wrist_model is not None:
+        wrist_xy = _run_wristnet(wrist_model, raw_lm_arrs, yolo_per_frame, w, h)
+    else:
+        wrist_xy = [(yp[0], yp[1]) if yp else (None, None) for yp in yolo_per_frame]
+
+    # ── VELOCITY / TRAIL / PEAK COMPUTATION ───────────────────────────────────
+    trail_history   = []   # (x_px, y_px, vel_m_s) tuples, accumulated
+    peak_markers    = []   # (x_px, y_px, mph) tuples
+    trail_count_at  = []   # trail_count_at[i]  = len(trail_history) after frame i
+    peak_count_at   = []
+    prev_vel_arr    = []
+    pitch_count_arr = []
+
+    prev_pos, prev_vel = None, 0.0
+    is_pitching, pitch_count, low_speed_timer = False, 0, 0
+    cur_x, cur_y, cur_v = [], [], []
+    pitch_peak_v, pitch_peak_fidx = 0.0, None
+    prev_was_pitching = False
+
+    for i in range(n):
+        lm_obj  = mp_lm_data[i]
+        ppm_val = ppms[i]
+        yp      = yolo_per_frame[i]
+        wx, wy  = wrist_xy[i]
+        conf    = yp[2] if yp else 0.0
+        wrist_visible = (conf >= VISIBILITY_THRESHOLD
+                         and wx is not None and wx > 0
+                         and lm_obj is not None and ppm_val is not None)
+
+        if wrist_visible:
+            raw_pos = np.array([wx, wy])
+            if prev_pos is not None:
+                jump_px = np.linalg.norm(raw_pos - prev_pos)
+                if jump_px <= MAX_JUMP_PX:
+                    cur_v_frame = (jump_px / ppm_val) / (1 / fps)
+                    if cur_v_frame <= MAX_PHYSICAL_VELOCITY:
+                        if cur_v_frame > v_start_thresh:
+                            is_pitching = True
+                            trail_history.append((int(wx), int(wy), cur_v_frame))
+                            cur_v.append(cur_v_frame)
+                            cur_x.append(wx)
+                            cur_y.append(wy)
+                        if is_pitching and cur_v_frame < v_stop_thresh:
+                            low_speed_timer += 1
+                            if low_speed_timer > stop_buffer:
+                                pitch_count += 1
+                                p_idx = int(np.argmax(cur_v))
+                                peak_markers.append((int(cur_x[p_idx]), int(cur_y[p_idx]),
+                                                     round(cur_v[p_idx] * MS_TO_MPH, 1)))
+                                is_pitching, low_speed_timer = False, 0
+                                cur_v, cur_x, cur_y = [], [], []
+                        prev_vel = cur_v_frame
+                    prev_pos = raw_pos.copy()
+            else:
+                prev_pos = raw_pos.copy()
+
+        # Ball-release tracking
+        if is_pitching and cur_v:
+            if cur_v[-1] > pitch_peak_v:
+                pitch_peak_v    = cur_v[-1]
+                pitch_peak_fidx = i
+        if prev_was_pitching and not is_pitching:
+            if pitch_peak_fidx is not None and 'ball_release' not in freeze_events:
+                freeze_events['ball_release'] = pitch_peak_fidx
+            pitch_peak_v, pitch_peak_fidx = 0.0, None
+        prev_was_pitching = is_pitching
+
+        trail_count_at.append(len(trail_history))
+        peak_count_at.append(len(peak_markers))
+        prev_vel_arr.append(prev_vel)
+        pitch_count_arr.append(pitch_count)
+
+    # ── ML KEY-MOMENT OVERRIDE ─────────────────────────────────────────────────
+    ml_targets = _predict_key_moments(raw_lm_arrs, fps)
+    if ml_targets:
+        for key, fidx in ml_targets.items():
+            freeze_events[key] = fidx
+            if key == 'foot_contact':
+                lm_arr = raw_lm_arrs[fidx]
+                if lm_arr is not None:
+                    ppm_loc  = ppms[fidx] or 1.0
+                    ra, da   = lm_arr[REACH_ANKLE_IDX], lm_arr[DRIVE_ANKLE_IDX]
+                    horiz_px = abs(ra[0]*w - da[0]*w)
+                    full_px  = float(np.linalg.norm([(ra[0]-da[0])*w, (ra[1]-da[1])*h]))
+                    stride_info = {
+                        'horiz_ft': round(horiz_px / ppm_loc * 3.28084, 1),
+                        'full_ft':  round(full_px  / ppm_loc * 3.28084, 1),
+                    }
+
+    # ── PHASE 2: RENDER ────────────────────────────────────────────────────────
+    cap2 = cv2.VideoCapture(input_path)
+    out  = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'),
+                           fps / slow_mo_factor, (w, h))
+    freeze_frames = {}
+
+    try:
+        for i in range(n):
+            ret, frame = cap2.read()
+            if not ret:
+                break
+
+            lm_obj = mp_lm_data[i]
+            yp     = yolo_per_frame[i]
+            wx, wy = wrist_xy[i]
+            conf   = yp[2] if yp else 0.0
+            wrist_vis_render = (conf >= VISIBILITY_THRESHOLD
+                                and wx is not None and wx > 0)
+
+            # Per-frame display vars (reset each iteration)
+            active_hip_ang = left_knee = left_ankle = right_knee = right_ankle = None
+            hip_label, hip_color = '', (255, 255, 255)
+
+            if lm_obj is not None:
+                ppm_val = ppms[i]
+
+                # 1. DUAL LEG ANGLES
+                if display_mode in ["All", "Leg Angles Only", "Angles Only"]:
+                    if lm_obj[L_HIP].z < lm_obj[R_HIP].z:
+                        hip_label, hip_color = "L-HIP", (0, 165, 255)
+                        hip_raw = get_angle_3d(lm_obj[L_SH], lm_obj[L_HIP], lm_obj[L_KNEE])
+                        active_hip_ang = hip_raw if hip_raw <= 180 else 360 - hip_raw
+                        draw_protractor(frame, lm_obj[L_HIP], lm_obj[L_SH], lm_obj[L_KNEE],
+                                        active_hip_ang, hip_color)
+                    else:
+                        hip_label, hip_color = "R-HIP", (255, 0, 255)
+                        hip_raw = get_angle_3d(lm_obj[R_SH], lm_obj[R_HIP], lm_obj[R_KNEE])
+                        active_hip_ang = hip_raw if hip_raw <= 180 else 360 - hip_raw
+                        draw_protractor(frame, lm_obj[R_HIP], lm_obj[R_SH], lm_obj[R_KNEE],
+                                        active_hip_ang, hip_color)
+
+                    l_knee_r = get_angle_3d(lm_obj[L_HIP], lm_obj[L_KNEE], lm_obj[L_ANKLE])
+                    l_ank_r  = get_angle_3d(lm_obj[L_KNEE], lm_obj[L_ANKLE], lm_obj[L_FOOT])
+                    left_knee  = l_knee_r if l_knee_r <= 180 else 360 - l_knee_r
+                    left_ankle = l_ank_r  if l_ank_r  <= 180 else 360 - l_ank_r
+                    r_knee_r = get_angle_3d(lm_obj[R_HIP], lm_obj[R_KNEE], lm_obj[R_ANKLE])
+                    r_ank_r  = get_angle_3d(lm_obj[R_KNEE], lm_obj[R_ANKLE], lm_obj[R_FOOT])
+                    right_knee  = r_knee_r if r_knee_r <= 180 else 360 - r_knee_r
+                    right_ankle = r_ank_r  if r_ank_r  <= 180 else 360 - r_ank_r
+
+                    draw_protractor(frame, lm_obj[L_KNEE],  lm_obj[L_HIP],  lm_obj[L_ANKLE], left_knee,   (0, 255, 255))
+                    draw_protractor(frame, lm_obj[L_ANKLE], lm_obj[L_KNEE], lm_obj[L_FOOT],  left_ankle,  (255, 255, 0))
+                    cv2.line(frame, (int(lm_obj[L_HIP].x*w),   int(lm_obj[L_HIP].y*h)),
+                                    (int(lm_obj[L_KNEE].x*w),  int(lm_obj[L_KNEE].y*h)),  (0, 255, 255), 2)
+                    cv2.line(frame, (int(lm_obj[L_KNEE].x*w),  int(lm_obj[L_KNEE].y*h)),
+                                    (int(lm_obj[L_ANKLE].x*w), int(lm_obj[L_ANKLE].y*h)), (0, 255, 255), 2)
+                    draw_protractor(frame, lm_obj[R_KNEE],  lm_obj[R_HIP],  lm_obj[R_ANKLE], right_knee,  (0, 255, 0))
+                    draw_protractor(frame, lm_obj[R_ANKLE], lm_obj[R_KNEE], lm_obj[R_FOOT],  right_ankle, (180, 105, 255))
+                    cv2.line(frame, (int(lm_obj[R_HIP].x*w),   int(lm_obj[R_HIP].y*h)),
+                                    (int(lm_obj[R_KNEE].x*w),  int(lm_obj[R_KNEE].y*h)),  (0, 255, 0), 2)
+                    cv2.line(frame, (int(lm_obj[R_KNEE].x*w),  int(lm_obj[R_KNEE].y*h)),
+                                    (int(lm_obj[R_ANKLE].x*w), int(lm_obj[R_ANKLE].y*h)), (0, 255, 0), 2)
+
+                # 2. ARM ANGLES
+                if display_mode in ["All", "Arm Angles Only", "Angles Only"]:
+                    elbow_raw = get_angle_3d(lm_obj[SHOULDER], lm_obj[ELBOW], lm_obj[WRIST])
+                    elbow_ang = elbow_raw if elbow_raw <= 180 else 360 - elbow_raw
+                    draw_protractor(frame, lm_obj[ELBOW], lm_obj[SHOULDER], lm_obj[WRIST],
+                                    elbow_ang, (255, 255, 0))
+                    cv2.line(frame, (int(lm_obj[SHOULDER].x*w), int(lm_obj[SHOULDER].y*h)),
+                                    (int(lm_obj[ELBOW].x*w),    int(lm_obj[ELBOW].y*h)),   (255, 255, 0), 2)
+                    cv2.line(frame, (int(lm_obj[ELBOW].x*w),    int(lm_obj[ELBOW].y*h)),
+                                    (int(lm_obj[WRIST].x*w),    int(lm_obj[WRIST].y*h)),   (255, 255, 0), 2)
+
+            # 3. WRIST TRACE & VELOCITY
+            if display_mode in ["All", "Wrist Trace & Velocity Only"]:
+                if wrist_vis_render:
+                    cv2.circle(frame, (int(wx), int(wy)), 6, (0, 255, 0),     -1, cv2.LINE_AA)
+                    cv2.circle(frame, (int(wx), int(wy)), 9, (255, 255, 255),   1, cv2.LINE_AA)
+
+                trail_i = trail_history[:trail_count_at[i]]
+                for j in range(1, len(trail_i)):
+                    cv2.line(frame, trail_i[j-1][:2], trail_i[j][:2],
+                             get_heatmap_color(trail_i[j][2]), 10, cv2.LINE_AA)
+
+                for px, py, mph in peak_markers[:peak_count_at[i]]:
+                    cv2.circle(frame, (px, py), 12, (0, 255, 255), 3,  cv2.LINE_AA)
+                    cv2.circle(frame, (px, py),  4, (255, 255, 255), -1, cv2.LINE_AA)
+                    cv2.putText(frame, f"{mph} MPH", (px - 40, py - 20),
+                                cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
+
+            # DASHBOARD
+            cv2.rectangle(frame, (10, 20), (380, 450), (0, 0, 0), -1)
+            cv2.rectangle(frame, (10, 20), (380, 450), (100, 100, 100), 2)
+            cv2.putText(frame, "DASHBOARD", (30, 65), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
+            cv2.line(frame, (30, 80), (350, 80), (150, 150, 150), 1)
+
+            if active_hip_ang is not None:
+                cv2.putText(frame, f"{hip_label}: {int(active_hip_ang)} deg", (30, 125),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
+            if left_knee is not None:
+                cv2.putText(frame, f"L-KNEE: {int(left_knee)} deg",   (30, 170),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                cv2.putText(frame, f"L-ANKLE: {int(left_ankle)} deg", (30, 215),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+            if right_knee is not None:
+                cv2.putText(frame, f"R-KNEE: {int(right_knee)} deg",   (30, 260),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(frame, f"R-ANKLE: {int(right_ankle)} deg", (30, 305),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 105, 255), 2)
+            if display_mode in ["All", "Wrist Trace & Velocity Only"]:
+                cv2.putText(frame, f"SPEED: {prev_vel_arr[i] * MS_TO_MPH:.1f} MPH", (30, 370),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                cv2.putText(frame, f"COUNT: {pitch_count_arr[i]}", (30, 415),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+            # Capture freeze frames at the right indices
+            for key, fidx in freeze_events.items():
+                if fidx == i and key not in freeze_frames:
+                    if key == 'foot_contact':
+                        fc = frame.copy()
+                        if lm_obj is not None:
+                            ra = lm_obj[REACH_ANKLE_IDX]
+                            da = lm_obj[DRIVE_ANKLE_IDX]
+                            rx, ry = int(ra.x*w), int(ra.y*h)
+                            dx, dy = int(da.x*w), int(da.y*h)
                             cv2.line(fc, (rx, ry), (dx, dy), (0, 255, 255), 3, cv2.LINE_AA)
                             cv2.putText(fc, f"FEET APART: {stride_info['full_ft']} ft",
                                         ((rx+dx)//2 - 140, min(ry, dy) - 20),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2, cv2.LINE_AA)
-                            freeze_frames['foot_contact'] = fc
-                        foot_phase = 'landed'
-
-                # Ball release: update candidate frame on each new velocity peak
-                if is_pitching and current_v_list:
-                    if current_v_list[-1] > pitch_peak_v:
-                        pitch_peak_v  = current_v_list[-1]
-                        pitch_peak_frame = frame.copy()
-
-                # Commit ball release when pitch transitions from active → ended
-                if prev_was_pitching and not is_pitching:
-                    if pitch_peak_frame is not None and 'ball_release' not in freeze_frames:
-                        freeze_frames['ball_release'] = pitch_peak_frame
-                    pitch_peak_v, pitch_peak_frame = 0.0, None
-                prev_was_pitching = is_pitching
+                        freeze_frames[key] = fc
+                    else:
+                        freeze_frames[key] = frame.copy()
 
             out.write(frame)
-            frame_count += 1
-
-        cap.release()
+    finally:
+        cap2.release()
         out.release()
 
-        # ML key-moment override: if model is available, replace heuristic results
-        ml_targets = _predict_key_moments(raw_lm_buffer, fps)
-        if ml_targets:
-            cap2 = cv2.VideoCapture(input_path)
-            for key, fidx in ml_targets.items():
-                cap2.set(cv2.CAP_PROP_POS_FRAMES, fidx)
-                ret2, raw_frame = cap2.read()
-                if not ret2:
-                    continue
-                if key == 'foot_contact':
-                    lm_arr = raw_lm_buffer[fidx]
-                    if lm_arr is not None:
-                        ppm_local = abs(lm_arr[30, 1] * h - lm_arr[0, 1] * h) / p_height_m
-                        ra, da = lm_arr[REACH_ANKLE_IDX], lm_arr[DRIVE_ANKLE_IDX]
-                        rx, ry = int(ra[0] * w), int(ra[1] * h)
-                        dx, dy = int(da[0] * w), int(da[1] * h)
-                        horiz_px = abs(ra[0] * w - da[0] * w)
-                        full_px  = float(np.linalg.norm([(ra[0]-da[0])*w, (ra[1]-da[1])*h]))
-                        stride_info = {
-                            'horiz_ft': round(horiz_px / ppm_local * 3.28084, 1),
-                            'full_ft':  round(full_px  / ppm_local * 3.28084, 1),
-                        }
-                        cv2.line(raw_frame, (rx, ry), (dx, dy), (0, 255, 255), 3, cv2.LINE_AA)
-                        cv2.putText(raw_frame, f"FEET APART: {stride_info['full_ft']} ft",
-                                    ((rx+dx)//2 - 140, min(ry, dy) - 20),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2, cv2.LINE_AA)
-                freeze_frames[key] = raw_frame
-            cap2.release()
-
-        # Save freeze frames as JPEG images and return paths
-        freeze_image_paths = []
-        base = output_path.rsplit('.', 1)[0]
-        for key, label in [
-            ('foot_lift',    '1 — Back Foot Lift'),
-            ('foot_peak',    '2 — Reach Foot Peak Height'),
-            ('foot_contact', '3 — Reach Foot Contact'),
-            ('ball_release', '4 — Ball Release'),
-        ]:
-            if key in freeze_frames:
-                img_path = f'{base}_freeze_{key}.jpg'
-                cv2.imwrite(img_path, freeze_frames[key])
-                freeze_image_paths.append({
-                    'label': label,
-                    'path':  img_path,
-                    'stride': stride_info if key == 'foot_contact' else {},
-                })
-        return freeze_image_paths
-    finally:
-        landmarker.close()
+    # Save freeze frames as JPEG images and return paths
+    freeze_image_paths = []
+    base = output_path.rsplit('.', 1)[0]
+    for key, label in [
+        ('foot_lift',    '1 — Back Foot Lift'),
+        ('foot_peak',    '2 — Reach Foot Peak Height'),
+        ('foot_contact', '3 — Reach Foot Contact'),
+        ('ball_release', '4 — Ball Release'),
+    ]:
+        if key in freeze_frames:
+            img_path = f'{base}_freeze_{key}.jpg'
+            cv2.imwrite(img_path, freeze_frames[key])
+            freeze_image_paths.append({
+                'label': label,
+                'path':  img_path,
+                'stride': stride_info if key == 'foot_contact' else {},
+            })
+    return freeze_image_paths
 
 def process_back(input_path, output_path, slow_mo_factor=2):
     """Back View Engine: Hip-Shoulder Separation (X-Factor)."""
@@ -573,7 +646,8 @@ def process_back(input_path, output_path, slow_mo_factor=2):
             if not ret: break
             
             timestamp_ms = int((frame_count / fps) * 1000)
-            result = landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=frame), timestamp_ms)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            result = landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), timestamp_ms)
 
             total_sec = frame_count / fps
             time_str = f"{int(total_sec//60):02}:{int(total_sec%60):02}.{int((total_sec%1)*100):02}"
