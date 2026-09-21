@@ -547,18 +547,33 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                     cv2.putText(frame, f"{mph} MPH", (px - 40, py - 20),
                                 cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
 
-            # DASHBOARD — compute height based on visible content
-            _last_y = 80  # header + divider always shown
+            # DASHBOARD — compute size based on visible content
+            _last_y = 80
             if lm_obj is not None:
-                _last_y = 305  # through R-ANKLE
+                _last_y = 305
             if display_mode in ["All", "Wrist Trace & Velocity Only"]:
-                _last_y = 415  # through COUNT
+                _last_y = 415
             _box_bottom = _last_y + 30
 
-            cv2.rectangle(frame, (10, 20), (380, _box_bottom), (0, 0, 0), -1)
-            cv2.rectangle(frame, (10, 20), (380, _box_bottom), (100, 100, 100), 2)
+            _dash_texts = [("DASHBOARD", cv2.FONT_HERSHEY_DUPLEX, 0.8, 2)]
+            if active_hip_ang is not None:
+                _dash_texts.append((f"{hip_label}: {int(active_hip_ang)} deg", cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2))
+            if left_knee is not None:
+                _dash_texts.append((f"L-KNEE: {int(left_knee)} deg",   cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2))
+                _dash_texts.append((f"L-ANKLE: {int(left_ankle)} deg", cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2))
+            if right_knee is not None:
+                _dash_texts.append((f"R-KNEE: {int(right_knee)} deg",   cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2))
+                _dash_texts.append((f"R-ANKLE: {int(right_ankle)} deg", cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2))
+            if display_mode in ["All", "Wrist Trace & Velocity Only"]:
+                _dash_texts.append((f"SPEED: {prev_vel_arr[i] * MS_TO_MPH:.1f} MPH", cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2))
+                _dash_texts.append((f"COUNT: {pitch_count_arr[i]}", cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2))
+            _max_w = max(cv2.getTextSize(t, f, s, th)[0][0] for t, f, s, th in _dash_texts)
+            _box_right = 30 + _max_w + 15
+
+            cv2.rectangle(frame, (10, 20), (_box_right, _box_bottom), (0, 0, 0), -1)
+            cv2.rectangle(frame, (10, 20), (_box_right, _box_bottom), (100, 100, 100), 2)
             cv2.putText(frame, "DASHBOARD", (30, 65), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
-            cv2.line(frame, (30, 80), (350, 80), (150, 150, 150), 1)
+            cv2.line(frame, (30, 80), (_box_right - 10, 80), (150, 150, 150), 1)
 
             if active_hip_ang is not None:
                 cv2.putText(frame, f"{hip_label}: {int(active_hip_ang)} deg", (30, 125),
