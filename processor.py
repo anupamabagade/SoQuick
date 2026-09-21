@@ -547,9 +547,16 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                     cv2.putText(frame, f"{mph} MPH", (px - 40, py - 20),
                                 cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
 
-            # DASHBOARD
-            cv2.rectangle(frame, (10, 20), (380, 450), (0, 0, 0), -1)
-            cv2.rectangle(frame, (10, 20), (380, 450), (100, 100, 100), 2)
+            # DASHBOARD — compute height based on visible content
+            _last_y = 80  # header + divider always shown
+            if lm_obj is not None:
+                _last_y = 305  # through R-ANKLE
+            if display_mode in ["All", "Wrist Trace & Velocity Only"]:
+                _last_y = 415  # through COUNT
+            _box_bottom = _last_y + 30
+
+            cv2.rectangle(frame, (10, 20), (380, _box_bottom), (0, 0, 0), -1)
+            cv2.rectangle(frame, (10, 20), (380, _box_bottom), (100, 100, 100), 2)
             cv2.putText(frame, "DASHBOARD", (30, 65), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 2)
             cv2.line(frame, (30, 80), (350, 80), (150, 150, 150), 1)
 
