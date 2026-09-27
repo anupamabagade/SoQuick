@@ -391,12 +391,12 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
         ppm_val = ppms[i]
         yp      = yolo_per_frame[i]
         wx, wy  = wrist_xy[i]
-        # When WristNet is running it produces valid positions on all frames;
-        # use MediaPipe wrist visibility instead of YOLO conf as the gate.
+        # WristNet is trained to predict through occlusion, so trust its output
+        # as long as the coordinate lands inside the frame. Only fall back to
+        # MediaPipe/YOLO confidence gating when WristNet is not loaded.
         if wrist_model is not None:
-            mp_vis = lm_obj[WRIST].visibility if lm_obj is not None else 0.0
-            wrist_visible = (mp_vis >= VISIBILITY_THRESHOLD
-                             and wx is not None and wx > 0
+            wrist_visible = (wx is not None and 0 < wx < w
+                             and wy is not None and 0 < wy < h
                              and lm_obj is not None and ppm_val is not None)
         else:
             conf = yp[2] if yp else 0.0
@@ -413,6 +413,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                     if cur_v_frame <= MAX_PHYSICAL_VELOCITY:
                         if cur_v_frame > v_start_thresh:
                             is_pitching = True
+                        if is_pitching:
                             trail_history.append((int(wx), int(wy), cur_v_frame))
                             cur_v.append(cur_v_frame)
                             cur_x.append(wx)
@@ -480,9 +481,8 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
             yp     = yolo_per_frame[i]
             wx, wy = wrist_xy[i]
             if wrist_model is not None:
-                mp_vis_r = lm_obj[WRIST].visibility if lm_obj is not None else 0.0
-                wrist_vis_render = (mp_vis_r >= VISIBILITY_THRESHOLD
-                                    and wx is not None and wx > 0)
+                wrist_vis_render = (wx is not None and 0 < wx < w
+                                    and wy is not None and 0 < wy < h)
             else:
                 conf = yp[2] if yp else 0.0
                 wrist_vis_render = (conf >= VISIBILITY_THRESHOLD
