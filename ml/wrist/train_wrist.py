@@ -25,8 +25,8 @@ from wrist_model import WristNet, save_model, load_model
 # ── config ─────────────────────────────────────────────────────────────────────
 FEATURES_DIR = "ml/wrist/features"
 MODELS_DIR   = "ml/wrist/models"
-WINDOW       = 31
-N_FEATURES   = 198
+WINDOW       = 61
+N_FEATURES   = 201
 HIDDEN       = 128
 N_LAYERS     = 2
 DROPOUT      = 0.3
@@ -154,7 +154,8 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,  num_workers=0)
     val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
 
-    cfg = dict(n_features=N_FEATURES, hidden=HIDDEN, n_layers=N_LAYERS,
+    cfg = dict(n_mp_features=198, n_yolo_features=3,
+               hidden=HIDDEN, n_layers=N_LAYERS,
                window=WINDOW, dropout=DROPOUT)
     model = WristNet(**cfg).to(device)
     print(f"\nModel parameters: {sum(p.numel() for p in model.parameters()):,}")

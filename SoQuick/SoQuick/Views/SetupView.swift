@@ -2,15 +2,22 @@ import SwiftUI
 import PhotosUI
 
 struct SetupView: View {
+    @EnvironmentObject var auth: AuthService
+    @EnvironmentObject var store: AnalysisStore
+
     @State private var pHeight = 65
     @State private var pSide   = "Right"
 
     @State private var selectedItem: PhotosPickerItem?
     @State private var videoURL: URL?
+    @State private var isLoadingVideo = false
 
     @State private var isProcessing = false
     @State private var frames: [FreezeFrame] = []
-    @State private var showResults  = false
+    @State private var armPathURL: URL?      = nil
+    @State private var showResults   = false
+    @State private var showDashboard = false
+    @State private var showProfile   = false
     @State private var errorMessage: String?
 
     var body: some View {
@@ -23,15 +30,40 @@ struct SetupView: View {
                         // ── Header ──────────────────────────────────────
                         ZStack {
                             sqGradient
-                                .ignoresSafeArea(edges: .top)
-                            VStack(spacing: 6) {
-                                SoQuickBrand()
-                                Text("Pitching Analysis")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.white.opacity(0.85))
+                            HStack(alignment: .top, spacing: 0) {
+                                VStack(spacing: 6) {
+                                    SoQuickBrand()
+                                    Text("Pitching Analysis")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.white.opacity(0.85))
+                                }
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                HStack(spacing: 4) {
+                                    Button { showProfile = true } label: {
+                                        Image(systemName: "person.circle")
+                                            .font(.system(size: 18, weight: .medium))
+                                            .foregroundStyle(.white.opacity(0.85))
+                                            .padding(12)
+                                    }
+                                    Button { showDashboard = true } label: {
+                                        Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+                                            .font(.system(size: 18, weight: .medium))
+                                            .foregroundStyle(.white.opacity(0.85))
+                                            .padding(12)
+                                    }
+                                    Button {
+                                        Task { try? await auth.signOut() }
+                                    } label: {
+                                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                                            .font(.system(size: 18, weight: .medium))
+                                            .foregroundStyle(.white.opacity(0.85))
+                                            .padding(12)
+                                    }
+                                }
                             }
-                            .padding(.top, 60)
-                            .padding(.bottom, 32)
+                            .padding(.top, 48)
+                            .padding(.bottom, 16)
+                            .padding(.horizontal, 4)
                         }
 
                         // ── Cards ────────────────────────────────────────
@@ -48,35 +80,50 @@ struct SetupView: View {
                                             Circle()
                                                 .fill(Color.sqPastel)
                                                 .frame(width: 44, height: 44)
-                                            Image(systemName: videoURL == nil
-                                                  ? "video.badge.plus"
-                                                  : "checkmark.circle.fill")
-                                                .font(.system(size: 20))
-                                                .foregroundStyle(videoURL == nil
-                                                                 ? Color.sqPrimary
-                                                                 : .green)
+                                            if isLoadingVideo {
+                                                ProgressView()
+                                                    .tint(Color.sqPrimary)
+                                            } else {
+                                                Image(systemName: videoURL == nil
+                                                      ? "video.badge.plus"
+                                                      : "checkmark.circle.fill")
+                                                    .font(.system(size: 20))
+                                                    .foregroundStyle(videoURL == nil
+                                                                     ? Color.sqPrimary : .green)
+                                            }
                                         }
                                         VStack(alignment: .leading, spacing: 2) {
-                                            Text(videoURL == nil
-                                                 ? "Select Pitching Video"
-                                                 : "Video Selected")
+                                            Text(isLoadingVideo
+                                                 ? "Loading video…"
+                                                 : videoURL == nil
+                                                    ? "Select Pitching Video"
+                                                    : "Video Selected")
                                                 .font(.system(size: 16, weight: .semibold))
                                                 .foregroundStyle(Color.sqDark)
-                                            Text(videoURL == nil
-                                                 ? "Tap to choose from Photos"
-                                                 : "Ready to analyze")
+                                            Text(isLoadingVideo
+                                                 ? "Please wait"
+                                                 : videoURL == nil
+                                                    ? "Tap to choose from Photos"
+                                                    : "Ready to analyze")
                                                 .font(.caption)
                                                 .foregroundStyle(.secondary)
                                         }
                                         Spacer()
-                                        Image(systemName: "chevron.right")
-                                            .foregroundStyle(Color.sqMid)
+                                        if !isLoadingVideo {
+                                            Image(systemName: "chevron.right")
+                                                .foregroundStyle(Color.sqMid)
+                                        }
                                     }
                                     .padding(16)
                                 }
                             }
                             .onChange(of: selectedItem) { _, item in
-                                Task { await loadVideo(from: item) }
+                                isLoadingVideo = true
+                                videoURL = nil
+                                Task {
+                                    await loadVideo(from: item)
+                                    isLoadingVideo = false
+                                }
                             }
 
                             // Pitcher settings card
@@ -88,9 +135,7 @@ struct SetupView: View {
                                             .foregroundStyle(Color.sqDark)
                                         Spacer()
                                         HStack(spacing: 0) {
-                                            Button {
-                                                if pHeight > 48 { pHeight -= 1 }
-                                            } label: {
+                                            Button { if pHeight > 48 { pHeight -= 1 } } label: {
                                                 Image(systemName: "minus.circle.fill")
                                                     .font(.system(size: 22))
                                                     .foregroundStyle(Color.sqLight)
@@ -99,9 +144,7 @@ struct SetupView: View {
                                                 .font(.system(size: 16, weight: .bold, design: .rounded))
                                                 .foregroundStyle(Color.sqPrimary)
                                                 .frame(width: 58)
-                                            Button {
-                                                if pHeight < 84 { pHeight += 1 }
-                                            } label: {
+                                            Button { if pHeight < 84 { pHeight += 1 } } label: {
                                                 Image(systemName: "plus.circle.fill")
                                                     .font(.system(size: 22))
                                                     .foregroundStyle(Color.sqLight)
@@ -117,12 +160,8 @@ struct SetupView: View {
                                             .font(.system(size: 15, weight: .medium))
                                             .foregroundStyle(Color.sqDark)
                                         HStack(spacing: 10) {
-                                            ArmButton(label: "Right", selected: pSide == "Right") {
-                                                pSide = "Right"
-                                            }
-                                            ArmButton(label: "Left", selected: pSide == "Left") {
-                                                pSide = "Left"
-                                            }
+                                            ArmButton(label: "Right", selected: pSide == "Right") { pSide = "Right" }
+                                            ArmButton(label: "Left",  selected: pSide == "Left")  { pSide = "Left"  }
                                         }
                                     }
                                     .padding(16)
@@ -131,25 +170,22 @@ struct SetupView: View {
 
                             // Analyze button
                             Button(action: runAnalysis) {
-                                ZStack {
-                                    if videoURL != nil {
-                                        sqGradient
-                                    } else {
-                                        Color.gray.opacity(0.3)
-                                    }
-                                    HStack(spacing: 10) {
-                                        Image(systemName: "bolt.fill")
-                                        Text("Analyze Pitch")
-                                            .font(.system(size: 17, weight: .bold, design: .rounded))
-                                    }
-                                    .foregroundStyle(videoURL != nil ? .white : Color.gray)
-                                    .padding(.vertical, 16)
+                                HStack(spacing: 10) {
+                                    Image(systemName: "bolt.fill")
+                                    Text("Analyze Pitch")
+                                        .font(.system(size: 17, weight: .bold, design: .rounded))
                                 }
+                                .foregroundStyle(videoURL != nil ? .white : Color.gray)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(videoURL != nil
+                                            ? AnyShapeStyle(sqGradient)
+                                            : AnyShapeStyle(Color.gray.opacity(0.3)))
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                                .shadow(color: Color.sqPrimary.opacity(videoURL != nil ? 0.35 : 0),
+                                        radius: 10, x: 0, y: 5)
                             }
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
-                            .shadow(color: Color.sqPrimary.opacity(videoURL != nil ? 0.35 : 0),
-                                    radius: 10, x: 0, y: 5)
-                            .disabled(videoURL == nil || isProcessing)
+                            .disabled(videoURL == nil || isProcessing || isLoadingVideo)
                         }
                         .padding(.horizontal, 20)
                         .padding(.top, 20)
@@ -157,9 +193,16 @@ struct SetupView: View {
                     }
                 }
             }
-            .navigationBarHidden(true)
+            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showResults) {
-                ResultView(frames: frames)
+                ResultView(frames: frames, armPathURL: armPathURL)
+            }
+            .navigationDestination(isPresented: $showDashboard) {
+                DashboardView()
+            }
+            .sheet(isPresented: $showProfile) {
+                PlayerDetailsView(isEditing: true)
+                    .environmentObject(auth)
             }
             .overlay {
                 if isProcessing { ProcessingView() }
@@ -187,9 +230,11 @@ struct SetupView: View {
                 let result = try await AnalysisService.shared.analyze(
                     videoURL: videoURL, height: pHeight, side: pSide
                 )
+                store.save(result: result)
                 await MainActor.run {
                     isProcessing = false
-                    frames       = result
+                    frames       = result.frames
+                    armPathURL   = result.videoURL
                     showResults  = true
                 }
             } catch {
@@ -201,8 +246,6 @@ struct SetupView: View {
         }
     }
 }
-
-// MARK: - Sub-views
 
 private struct ArmButton: View {
     let label: String
@@ -216,15 +259,11 @@ private struct ArmButton: View {
                 .foregroundStyle(selected ? .white : Color.sqPrimary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
-                .background(
-                    selected ? AnyShapeStyle(sqGradient) : AnyShapeStyle(Color.sqPastel)
-                )
+                .background(selected ? AnyShapeStyle(sqGradient) : AnyShapeStyle(Color.sqPastel))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
         }
     }
 }
-
-// MARK: - Video loader
 
 struct VideoTransferable: Transferable {
     let url: URL

@@ -20,6 +20,7 @@ import os
 import uuid
 import base64
 import glob
+import subprocess
 
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.responses import JSONResponse
@@ -86,9 +87,10 @@ async def analyze(
     p_height: int        = Form(62),
     p_side:   str        = Form("Right"),
 ):
-    job    = uuid.uuid4().hex[:8]
-    tmp_in = f"/tmp/{job}_input.mp4"
-    tmp_out = f"/tmp/{job}_raw.avi"
+    job     = uuid.uuid4().hex[:8]
+    tmp_in  = f"/tmp/{job}_input.mp4"
+    tmp_raw = f"/tmp/{job}_raw.avi"
+    tmp_mp4 = f"/tmp/{job}_arm_path.mp4"
 
     with open(tmp_in, "wb") as f:
         f.write(await video.read())
@@ -96,20 +98,21 @@ async def analyze(
     try:
         freeze_frames = processor.process_lateral(
             input_path      = tmp_in,
-            output_path     = tmp_out,
+            output_path     = tmp_raw,
             p_height_inches = p_height,
             p_side          = p_side,
-            display_mode    = "Angles Only",  # skips YOLO/PyTorch — fits free-tier RAM
+            display_mode    = "All",  # YOLO nano + WristNet + angles
             slow_mo_factor  = 1,
         )
     except Exception as exc:
         import traceback
-        _cleanup(tmp_in, tmp_out)
+        _cleanup(tmp_in, tmp_raw, tmp_mp4)
         return JSONResponse(status_code=500, content={
             "error": str(exc),
             "traceback": traceback.format_exc(),
         })
 
+    # Encode freeze-frame stills (angles only — trail was excluded during capture)
     results = []
     for ff in freeze_frames:
         img_path = ff.get("path", "")
@@ -124,14 +127,27 @@ async def analyze(
             "stride":    stride,
         })
 
-    _cleanup(tmp_in, tmp_out)
-    return {"freeze_frames": results}
+    # Re-encode the arm-path video to H.264 MP4 for iOS playback
+    video_b64 = ""
+    if os.path.exists(tmp_raw):
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", tmp_raw,
+             "-vcodec", "libx264", "-preset", "fast", "-crf", "28",
+             "-movflags", "+faststart", tmp_mp4],
+            capture_output=True,
+        )
+        if os.path.exists(tmp_mp4):
+            with open(tmp_mp4, "rb") as f:
+                video_b64 = base64.b64encode(f.read()).decode()
+
+    _cleanup(tmp_in, tmp_raw, tmp_mp4)
+    return {"freeze_frames": results, "video_b64": video_b64}
 
 
 def _cleanup(*paths):
     for p in paths:
         try: os.remove(p)
-        except FileNotFoundError: pass
+        except (FileNotFoundError, TypeError): pass
     for p in glob.glob("/tmp/*_freeze_*.jpg"):
         try: os.remove(p)
         except FileNotFoundError: pass

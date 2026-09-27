@@ -256,7 +256,7 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
         global _yolo_model
         if _yolo_model is None:
             from ultralytics import YOLO
-            _yolo_model = YOLO('yolov8x-pose.pt')
+            _yolo_model = YOLO('yolov8n-pose.pt')
         yolo = _yolo_model
     else:
         yolo = None
@@ -530,23 +530,6 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                     cv2.line(frame, (int(lm_obj[ELBOW].x*w),    int(lm_obj[ELBOW].y*h)),
                                     (int(lm_obj[WRIST].x*w),    int(lm_obj[WRIST].y*h)),   (255, 255, 0), 2)
 
-            # 3. WRIST TRACE & VELOCITY
-            if display_mode in ["All", "Wrist Trace & Velocity Only"]:
-                if wrist_vis_render:
-                    cv2.circle(frame, (int(wx), int(wy)), 6, (0, 255, 0),     -1, cv2.LINE_AA)
-                    cv2.circle(frame, (int(wx), int(wy)), 9, (255, 255, 255),   1, cv2.LINE_AA)
-
-                trail_i = trail_history[:trail_count_at[i]]
-                for j in range(1, len(trail_i)):
-                    cv2.line(frame, trail_i[j-1][:2], trail_i[j][:2],
-                             get_heatmap_color(trail_i[j][2]), 10, cv2.LINE_AA)
-
-                for px, py, mph in peak_markers[:peak_count_at[i]]:
-                    cv2.circle(frame, (px, py), 12, (0, 255, 255), 3,  cv2.LINE_AA)
-                    cv2.circle(frame, (px, py),  4, (255, 255, 255), -1, cv2.LINE_AA)
-                    cv2.putText(frame, f"{mph} MPH", (px - 40, py - 20),
-                                cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
-
             # DASHBOARD — compute size based on visible content
             _last_y = 80
             if lm_obj is not None:
@@ -611,6 +594,24 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
                         freeze_frames[key] = fc
                     else:
                         freeze_frames[key] = frame.copy()
+
+            # 3. WRIST TRACE & VELOCITY — drawn after freeze-frame capture so trail
+            #    appears in the output video but not in the key-moment still images
+            if display_mode in ["All", "Wrist Trace & Velocity Only"]:
+                if wrist_vis_render:
+                    cv2.circle(frame, (int(wx), int(wy)), 6, (0, 255, 0),     -1, cv2.LINE_AA)
+                    cv2.circle(frame, (int(wx), int(wy)), 9, (255, 255, 255),   1, cv2.LINE_AA)
+
+                trail_i = trail_history[:trail_count_at[i]]
+                for j in range(1, len(trail_i)):
+                    cv2.line(frame, trail_i[j-1][:2], trail_i[j][:2],
+                             get_heatmap_color(trail_i[j][2]), 10, cv2.LINE_AA)
+
+                for px, py, mph in peak_markers[:peak_count_at[i]]:
+                    cv2.circle(frame, (px, py), 12, (0, 255, 255), 3,  cv2.LINE_AA)
+                    cv2.circle(frame, (px, py),  4, (255, 255, 255), -1, cv2.LINE_AA)
+                    cv2.putText(frame, f"{mph} MPH", (px - 40, py - 20),
+                                cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
 
             out.write(frame)
     finally:

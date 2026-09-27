@@ -36,7 +36,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
-# Note: YOLO model not pre-downloaded — API uses display_mode="Angles Only" which skips YOLO
+# YOLO nano (yolov8n-pose.pt) is auto-downloaded by ultralytics on first request (~6MB)
 COPY . .
 
 EXPOSE 8000
