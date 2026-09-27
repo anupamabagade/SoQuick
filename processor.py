@@ -309,9 +309,9 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
             mp_lm_data.append(lm_obj)
             ppms.append(ppm_val)
 
-            # YOLO wrist detection
+            # YOLO wrist detection — run every 3rd frame to limit CPU time on server
             yp = None
-            if yolo is not None:
+            if yolo is not None and frame_count % 3 == 0:
                 yr = yolo(frame, verbose=False)
                 if yr and yr[0].keypoints is not None and len(yr[0].keypoints.xy) > 0:
                     kps_xy   = yr[0].keypoints.xy
