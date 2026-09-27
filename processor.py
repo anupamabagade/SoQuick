@@ -47,11 +47,18 @@ def _run_wristnet(model, raw_lm_arrs, yolo_per_frame, w, h):
 
     mp_feats   = _normalize_lm(raw_lm_arrs)             # (n, 198)
     yolo_feats = np.zeros((n, 3), np.float32)
+    # Carry forward the last valid YOLO detection so non-YOLO frames (YOLO
+    # runs every 3rd frame) still get a meaningful yolo_xy residual.
+    # Leaving them as (0,0,0) makes the model output yolo_xy+delta ≈ (0,0)
+    # which jumps to the top-left corner and gets rejected by MAX_JUMP_PX.
+    last_yp = None
     for i, yp in enumerate(yolo_per_frame):
         if yp is not None and yp[0] > 0:
-            yolo_feats[i, 0] = yp[0] / w
-            yolo_feats[i, 1] = yp[1] / h
-            yolo_feats[i, 2] = yp[2]
+            last_yp = yp
+        if last_yp is not None:
+            yolo_feats[i, 0] = last_yp[0] / w
+            yolo_feats[i, 1] = last_yp[1] / h
+            yolo_feats[i, 2] = last_yp[2]
 
     features = np.concatenate([mp_feats, yolo_feats], axis=1)   # (n, 201)
     pad      = np.zeros((HALF, features.shape[1]), np.float32)
