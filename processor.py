@@ -391,10 +391,18 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
         ppm_val = ppms[i]
         yp      = yolo_per_frame[i]
         wx, wy  = wrist_xy[i]
-        conf    = yp[2] if yp else 0.0
-        wrist_visible = (conf >= VISIBILITY_THRESHOLD
-                         and wx is not None and wx > 0
-                         and lm_obj is not None and ppm_val is not None)
+        # When WristNet is running it produces valid positions on all frames;
+        # use MediaPipe wrist visibility instead of YOLO conf as the gate.
+        if wrist_model is not None:
+            mp_vis = lm_obj[WRIST].visibility if lm_obj is not None else 0.0
+            wrist_visible = (mp_vis >= VISIBILITY_THRESHOLD
+                             and wx is not None and wx > 0
+                             and lm_obj is not None and ppm_val is not None)
+        else:
+            conf = yp[2] if yp else 0.0
+            wrist_visible = (conf >= VISIBILITY_THRESHOLD
+                             and wx is not None and wx > 0
+                             and lm_obj is not None and ppm_val is not None)
 
         if wrist_visible:
             raw_pos = np.array([wx, wy])
@@ -471,9 +479,14 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
             lm_obj = mp_lm_data[i]
             yp     = yolo_per_frame[i]
             wx, wy = wrist_xy[i]
-            conf   = yp[2] if yp else 0.0
-            wrist_vis_render = (conf >= VISIBILITY_THRESHOLD
-                                and wx is not None and wx > 0)
+            if wrist_model is not None:
+                mp_vis_r = lm_obj[WRIST].visibility if lm_obj is not None else 0.0
+                wrist_vis_render = (mp_vis_r >= VISIBILITY_THRESHOLD
+                                    and wx is not None and wx > 0)
+            else:
+                conf = yp[2] if yp else 0.0
+                wrist_vis_render = (conf >= VISIBILITY_THRESHOLD
+                                    and wx is not None and wx > 0)
 
             # Per-frame display vars (reset each iteration)
             active_hip_ang = left_knee = left_ankle = right_knee = right_ankle = None

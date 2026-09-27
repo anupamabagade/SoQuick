@@ -21,6 +21,7 @@ import uuid
 import base64
 import glob
 import subprocess
+import cv2
 
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.responses import JSONResponse
@@ -95,6 +96,13 @@ async def analyze(
     with open(tmp_in, "wb") as f:
         f.write(await video.read())
 
+    # Auto-detect slow-motion: target ~30fps output regardless of capture fps.
+    # iPhone slow-mo is 240fps; without this the output video plays too fast.
+    _probe = cv2.VideoCapture(tmp_in)
+    _input_fps = _probe.get(cv2.CAP_PROP_FPS) or 30.0
+    _probe.release()
+    slow_mo_factor = max(1, int(round(_input_fps / 30)))
+
     try:
         freeze_frames = processor.process_lateral(
             input_path      = tmp_in,
@@ -102,7 +110,7 @@ async def analyze(
             p_height_inches = p_height,
             p_side          = p_side,
             display_mode    = "All",  # YOLO nano + WristNet + angles
-            slow_mo_factor  = 1,
+            slow_mo_factor  = slow_mo_factor,
         )
     except Exception as exc:
         import traceback
