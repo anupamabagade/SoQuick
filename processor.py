@@ -242,6 +242,28 @@ def draw_protractor(img, p_center, p_start, p_end, angle_val, color):
     cv2.putText(img, f"{int(disp)}", (center[0]+15, center[1]-15), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
     
+def _interp_yolo_wrist(yolo_per_frame, n):
+    """Interpolate YOLO wrist detections across all frames.
+
+    YOLO runs every 3rd frame.  Linear interpolation between valid detections
+    fills the gaps without the residual-model calibration issues of WristNet.
+    Frames outside the first–last detection range return (None, None).
+    """
+    raw = [
+        (float(yp[0]), float(yp[1])) if (yp is not None and yp[0] > 0) else (None, None)
+        for yp in yolo_per_frame
+    ]
+    valid_i = [i for i, xy in enumerate(raw) if xy[0] is not None]
+    if len(valid_i) < 2:
+        return raw
+    xs = np.interp(range(n), valid_i, [raw[i][0] for i in valid_i])
+    ys = np.interp(range(n), valid_i, [raw[i][1] for i in valid_i])
+    result = [(None, None)] * n
+    for i in range(valid_i[0], valid_i[-1] + 1):
+        result[i] = (float(xs[i]), float(ys[i]))
+    return result
+
+
 def process_lateral(input_path, output_path, p_height_inches, p_side, display_mode="All", slow_mo_factor=2):
     p_height_m = p_height_inches * 0.0254
     v_start_thresh, v_stop_thresh = 3.5, 5.0
@@ -372,12 +394,17 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
 
     n = frame_count
 
-    # ── WRISTNET CORRECTION ────────────────────────────────────────────────────
-    wrist_model = _get_wrist_model() if use_yolo else None
-    if wrist_model is not None:
-        wrist_xy = _run_wristnet(wrist_model, raw_lm_arrs, yolo_per_frame, w, h)
+    # ── WRIST POSITIONS — interpolated YOLO (same technique as website) ──────────
+    # WristNet bypassed: the residual-correction model requires YOLO on every
+    # frame; with 3x subsampling it outputs near-(0,0) for 2/3 of frames.
+    # Instead, use YOLO every-3rd-frame as anchor points and linearly interpolate
+    # between them — this is the approach that produced the working trace on the
+    # Streamlit website.
+    wrist_model = None
+    if use_yolo:
+        wrist_xy = _interp_yolo_wrist(yolo_per_frame, n)
     else:
-        wrist_xy = [(yp[0], yp[1]) if yp else (None, None) for yp in yolo_per_frame]
+        wrist_xy = [(None, None)] * n
 
     # ── VELOCITY / TRAIL / PEAK COMPUTATION ───────────────────────────────────
     trail_history   = []   # (x_px, y_px, vel_m_s) tuples, accumulated
@@ -398,18 +425,9 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
         ppm_val = ppms[i]
         yp      = yolo_per_frame[i]
         wx, wy  = wrist_xy[i]
-        # WristNet is trained to predict through occlusion, so trust its output
-        # as long as the coordinate lands inside the frame. Only fall back to
-        # MediaPipe/YOLO confidence gating when WristNet is not loaded.
-        if wrist_model is not None:
-            wrist_visible = (wx is not None and 0 < wx < w
-                             and wy is not None and 0 < wy < h
-                             and lm_obj is not None and ppm_val is not None)
-        else:
-            conf = yp[2] if yp else 0.0
-            wrist_visible = (conf >= VISIBILITY_THRESHOLD
-                             and wx is not None and wx > 0
-                             and lm_obj is not None and ppm_val is not None)
+        wrist_visible = (wx is not None and 0 < wx < w
+                         and wy is not None and 0 < wy < h
+                         and lm_obj is not None and ppm_val is not None)
 
         if wrist_visible:
             raw_pos = np.array([wx, wy])
@@ -487,13 +505,8 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
             lm_obj = mp_lm_data[i]
             yp     = yolo_per_frame[i]
             wx, wy = wrist_xy[i]
-            if wrist_model is not None:
-                wrist_vis_render = (wx is not None and 0 < wx < w
-                                    and wy is not None and 0 < wy < h)
-            else:
-                conf = yp[2] if yp else 0.0
-                wrist_vis_render = (conf >= VISIBILITY_THRESHOLD
-                                    and wx is not None and wx > 0)
+            wrist_vis_render = (wx is not None and 0 < wx < w
+                                and wy is not None and 0 < wy < h)
 
             # Per-frame display vars (reset each iteration)
             active_hip_ang = left_knee = left_ankle = right_knee = right_ankle = None
