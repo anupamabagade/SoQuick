@@ -8,9 +8,12 @@ struct ResultView: View {
     @EnvironmentObject var store: AnalysisStore
     @Environment(\.dismiss) var dismiss
     @State private var savedIndices: Set<Int> = []
+    @State private var savedVideo = false
     @State private var saveError: String?
     @State private var showDashboard = false
     @State private var player: AVPlayer? = nil
+    @State private var showEnlargedVideo = false
+    @State private var enlargedImage: EnlargedImage? = nil
 
     private let momentEmojis = ["🦵", "🏔️", "👣", "⚾"]
 
@@ -75,9 +78,46 @@ struct ResultView: View {
                                     .padding(.top, 16)
                                     .padding(.bottom, 12)
 
-                                    VideoPlayer(player: p)
-                                        .frame(height: 220)
-                                        .onAppear { p.play() }
+                                    ZStack(alignment: .topTrailing) {
+                                        VideoPlayer(player: p)
+                                            .frame(height: 220)
+                                            .onAppear { p.play() }
+                                            .contentShape(Rectangle())
+                                            .onTapGesture { showEnlargedVideo = true }
+
+                                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(.white)
+                                            .padding(8)
+                                            .background(.black.opacity(0.45))
+                                            .clipShape(Circle())
+                                            .padding(10)
+                                            .allowsHitTesting(false)
+                                    }
+
+                                    HStack {
+                                        Spacer()
+                                        Button {
+                                            if let url = armPathURL { saveVideo(url) }
+                                        } label: {
+                                            Label(
+                                                savedVideo ? "Saved" : "Save Video",
+                                                systemImage: savedVideo
+                                                    ? "checkmark.circle.fill"
+                                                    : "square.and.arrow.down"
+                                            )
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(savedVideo ? .green : Color.sqPrimary)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 6)
+                                            .background(
+                                                savedVideo ? Color.green.opacity(0.12) : Color.sqPastel
+                                            )
+                                            .clipShape(Capsule())
+                                        }
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 12)
                                 }
                             }
                         }
@@ -110,10 +150,23 @@ struct ResultView: View {
                                     .padding(.top, 16)
                                     .padding(.bottom, 12)
 
-                                    Image(uiImage: frame.image)
-                                        .resizable()
-                                        .scaledToFit()
-                                        .frame(maxWidth: .infinity)
+                                    ZStack(alignment: .topTrailing) {
+                                        Image(uiImage: frame.image)
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(maxWidth: .infinity)
+                                            .contentShape(Rectangle())
+                                            .onTapGesture { enlargedImage = EnlargedImage(image: frame.image) }
+
+                                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(.white)
+                                            .padding(8)
+                                            .background(.black.opacity(0.45))
+                                            .clipShape(Circle())
+                                            .padding(10)
+                                            .allowsHitTesting(false)
+                                    }
 
                                     HStack {
                                         if let horiz = frame.stride["horiz_ft"] {
@@ -216,6 +269,33 @@ struct ResultView: View {
         .onDisappear {
             player?.pause()
         }
+        .fullScreenCover(isPresented: $showEnlargedVideo) {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if let p = player {
+                    VideoPlayer(player: p)
+                        .ignoresSafeArea()
+                }
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button { showEnlargedVideo = false } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(12)
+                                .background(.black.opacity(0.4))
+                                .clipShape(Circle())
+                        }
+                        .padding()
+                    }
+                    Spacer()
+                }
+            }
+        }
+        .fullScreenCover(item: $enlargedImage) { item in
+            ZoomableImageViewer(image: item.image) { enlargedImage = nil }
+        }
     }
 
     private func saveImage(_ image: UIImage, index: Int) {
@@ -231,6 +311,88 @@ struct ResultView: View {
                     if success { savedIndices.insert(index) }
                     else { saveError = error?.localizedDescription ?? "Could not save." }
                 }
+            }
+        }
+    }
+
+    private func saveVideo(_ url: URL) {
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            guard status == .authorized || status == .limited else {
+                DispatchQueue.main.async { saveError = "Photo library access denied." }
+                return
+            }
+            PHPhotoLibrary.shared().performChanges({
+                PHAssetCreationRequest.forAsset().addResource(with: .video, fileURL: url, options: nil)
+            }) { success, error in
+                DispatchQueue.main.async {
+                    if success { savedVideo = true }
+                    else { saveError = error?.localizedDescription ?? "Could not save video." }
+                }
+            }
+        }
+    }
+}
+
+private struct EnlargedImage: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
+
+private struct ZoomableImageViewer: View {
+    let image: UIImage
+    let onDismiss: () -> Void
+
+    @State private var scale: CGFloat = 1
+    @State private var lastScale: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .scaleEffect(scale)
+                .offset(offset)
+                .gesture(
+                    MagnificationGesture()
+                        .onChanged { value in
+                            scale = max(1, min(lastScale * value, 5))
+                        }
+                        .onEnded { _ in lastScale = scale }
+                )
+                .simultaneousGesture(
+                    DragGesture()
+                        .onChanged { value in
+                            guard scale > 1 else { return }
+                            offset = CGSize(width: lastOffset.width + value.translation.width,
+                                            height: lastOffset.height + value.translation.height)
+                        }
+                        .onEnded { _ in lastOffset = offset }
+                )
+                .onTapGesture(count: 2) {
+                    withAnimation {
+                        scale = 1; lastScale = 1
+                        offset = .zero; lastOffset = .zero
+                    }
+                }
+
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: onDismiss) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(12)
+                            .background(.black.opacity(0.4))
+                            .clipShape(Circle())
+                    }
+                    .padding()
+                }
+                Spacer()
             }
         }
     }
