@@ -245,9 +245,9 @@ def draw_protractor(img, p_center, p_start, p_end, angle_val, color):
 def _interp_yolo_wrist(yolo_per_frame, n):
     """Interpolate YOLO wrist detections across all frames.
 
-    YOLO runs every 3rd frame.  Linear interpolation between valid detections
-    fills the gaps without the residual-model calibration issues of WristNet.
-    Frames outside the first–last detection range return (None, None).
+    YOLO runs on every frame, so this mainly fills the rare frame where
+    detection dropped out (occlusion, low confidence). Frames outside the
+    first–last detection range return (None, None).
     """
     raw = [
         (float(yp[0]), float(yp[1])) if (yp is not None and yp[0] > 0) else (None, None)
@@ -338,9 +338,11 @@ def process_lateral(input_path, output_path, p_height_inches, p_side, display_mo
             mp_lm_data.append(lm_obj)
             ppms.append(ppm_val)
 
-            # YOLO wrist detection — run every 3rd frame to limit CPU time on server
+            # YOLO wrist detection — run on every frame for full trace accuracy
+            # (subsampling was needed only when WristNet consumed YOLO output
+            # per-frame; interpolation quality now depends directly on this)
             yp = None
-            if yolo is not None and frame_count % 3 == 0:
+            if yolo is not None:
                 yr = yolo(frame, verbose=False)
                 if yr and yr[0].keypoints is not None and len(yr[0].keypoints.xy) > 0:
                     kps_xy   = yr[0].keypoints.xy
